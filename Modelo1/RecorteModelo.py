@@ -157,7 +157,7 @@ async def list_image_paths(folder_paths):
 
 async def main():
     imgs_folders = [
-        "/Users/imartinezt/Downloads/Aaaa/"
+        "[/RUTA/]"
     ]
 
     image_paths = await list_image_paths(imgs_folders)

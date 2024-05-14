@@ -125,7 +125,7 @@ async def process_images(image_folder, output_folder="Piloto2", batch_size=10):
 
 
 async def main():
-    image_folder = "[RUTA]"
+    image_folder = "[/RUTA/]"
     await asyncio.gather(process_images(image_folder))
 
 
