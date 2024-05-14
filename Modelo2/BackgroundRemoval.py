@@ -1,13 +1,18 @@
 import asyncio
+import json
 import os
 import time
 import io
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from functools import partial
+
+import aiofiles
 from PIL import Image, ExifTags
 from google.cloud import vision_v1
 from google.cloud.vision_v1 import types
+from google.oauth2 import service_account
 from rembg import remove
+from collections import OrderedDict
 
 """
 @Autor: Iván Martínez Trejo.
@@ -23,48 +28,64 @@ Contacto: imartinezt@liverpool.com.mx
 
 
 def get_vision_client():
-    return vision_v1.ImageAnnotatorClient()
+    sa_path = "keys.json"
+    with open(sa_path) as source:
+        info = json.load(source)
+    creds = service_account.Credentials.from_service_account_info(info)
+    return vision_v1.ImageAnnotatorClient(credentials=creds)
 
 
 async def detect_objects(image_content, client):
-    return await asyncio.get_event_loop().run_in_executor(None, client.object_localization,
-                                                          types.Image(content=image_content))
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, client.object_localization, types.Image(content=image_content))
 
 
 async def remove_background_async(input_buffer):
-    return await asyncio.get_event_loop().run_in_executor(None, remove, input_buffer)
-
-
-async def correct_image_orientation_async(img, executor):
-    def correct_orientation(imagen):
-        orientation_key = next((k for k, v in ExifTags.TAGS.items() if v == 'Orientation'), None)
-        if not orientation_key:
-            return imagen
-        try:
-            exif = imagen.getexif()
-            if exif is not None:
-                orientation = exif.get(orientation_key)
-                rotations = {3: 180, 6: 270, 8: 90}
-                if orientation in rotations:
-                    imagen = imagen.rotate(rotations[orientation], expand=True)
-        except Exception as e:
-            print(f"Error correcting orientation: {e}")
-        return imagen
-
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(executor, correct_orientation, img)
+    with ProcessPoolExecutor() as executor:
+        return await loop.run_in_executor(executor, partial(remove, input_buffer, alpha_matting=False,
+                                                            alpha_matting_foreground_threshold=100,
+                                                            alpha_matting_background_threshold=50,
+                                                            alpha_matting_erode_structure_size=9,
+                                                            alpha_matting_erode_size=3))
 
 
-async def process_image(image_path, client, output_folder, filename_prefix, i, executor):
-    with open(image_path, "rb") as image_file:
-        content = image_file.read()
+def correct_orientation(imagen):
+    orientation_key = next((k for k, v in ExifTags.TAGS.items() if v == 'Orientation'), None)
+    if not orientation_key:
+        return imagen
+    try:
+        exif = imagen.getexif()
+        if exif is not None:
+            orientation = exif.get(orientation_key)
+            rotations = {3: 180, 6: 270, 8: 90}
+            if orientation in rotations:
+                imagen = imagen.rotate(rotations[orientation], expand=True)
+    except Exception as e:
+        print(f"Error correcting orientation: {e}")
+    return imagen
 
-    pil_image = Image.open(io.BytesIO(content))
 
-    orientation_task = correct_image_orientation_async(pil_image, executor)
-    detection_task = detect_objects(content, client)
+async def correct_image_orientation_async(img):
+    loop = asyncio.get_running_loop()
+    with ProcessPoolExecutor() as executor:
+        return await loop.run_in_executor(executor, correct_orientation, img)
 
-    pil_image, response = await asyncio.gather(orientation_task, detection_task)
+
+async def process_image(image_path, client, output_folder, filename_prefix, i, cache):
+    async with aiofiles.open(image_path, "rb") as image_file:
+        content = await image_file.read()
+
+    if content in cache:
+        pil_image, response = cache[content]
+    else:
+        pil_image = Image.open(io.BytesIO(content))
+
+        orientation_task = correct_image_orientation_async(pil_image)
+        detection_task = detect_objects(content, client)
+
+        pil_image, response = await asyncio.gather(orientation_task, detection_task)
+        cache[content] = (pil_image, response)
 
     if response.localized_object_annotations:
         detected_objects = response.localized_object_annotations
@@ -98,34 +119,53 @@ async def process_image(image_path, client, output_folder, filename_prefix, i, e
             y_center = (1215 - transparent_image.height) // 2
             final_image.paste(transparent_image, (x_center, y_center), transparent_image)
 
-            await save_adjusted_image_async(final_image, output_folder, filename_prefix, i, executor)
+            await save_adjusted_image_async(final_image, output_folder, filename_prefix, i)
 
 
-async def save_adjusted_image_async(image, output_folder, filename_prefix, i, executor):
+async def save_adjusted_image_async(image, output_folder, filename_prefix, i):
     filename = f"{filename_prefix}{i}.jpeg"
     output_path = os.path.join(output_folder, filename)
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(executor, partial(image.save, output_path, format='JPEG', dpi=(72, 72)))
+    with ThreadPoolExecutor() as executor:
+        await loop.run_in_executor(executor, partial(image.save, output_path, format='JPEG', dpi=(72, 72)))
 
 
-async def process_images(image_folder, output_folder="Piloto2", batch_size=10):
+async def worker(queue, client, output_folder, filename_prefix, cache):
+    while True:
+        image_path, index = await queue.get()
+        if image_path is None:
+            break
+        await process_image(image_path, client, output_folder, filename_prefix, index, cache)
+        queue.task_done()
+
+
+async def process_images(image_folder, output_folder="Piloto2", max_tasks=10):
     client = get_vision_client()
     os.makedirs(output_folder, exist_ok=True)
     image_paths = [os.path.join(image_folder, filename) for filename in os.listdir(image_folder) if
                    filename.endswith((".jpg", ".jpeg", ".png"))]
 
-    tasks = []
-    with ThreadPoolExecutor() as executor:
-        for i in range(0, len(image_paths), batch_size):
-            batch = image_paths[i:i + batch_size]
-            for index, path in enumerate(batch):
-                task = process_image(path, client, output_folder, "AIModelTwo-", i + index + 1, executor)
-                tasks.append(task)
-        await asyncio.gather(*tasks)
+    queue = asyncio.Queue()
+    cache = OrderedDict()
+
+    for index, path in enumerate(image_paths):
+        await queue.put((path, index + 1))
+
+    workers = []
+    for i in range(max_tasks):
+        worker_task = asyncio.create_task(worker(queue, client, output_folder, "AIModelTwo-", cache))
+        workers.append(worker_task)
+
+    await queue.join()
+
+    for i in range(max_tasks):
+        await queue.put((None, None))
+
+    await asyncio.gather(*workers)
 
 
 async def main():
-    image_folder = "[/RUTA/]"
+    image_folder = "[/PATH/]"
     await asyncio.gather(process_images(image_folder))
 
 

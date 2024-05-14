@@ -1,11 +1,13 @@
 import asyncio
 import io
+import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ExifTags
 from google.cloud import vision_v1
+from google.oauth2 import service_account
 
 """
 @Autor: Iván Martínez Trejo.
@@ -14,8 +16,16 @@ Contacto: imartinezt@liverpool.com.mx
         - Recorte centrado
              - Lienzo a 940 px ancho X 1215 px de alto.
              - Resolución 72 dpis.
-             - Formatos de imagen y peso: JPG yMB
+             - Formatos de imagen y peso: JPG y MB
 """
+
+
+def get_vision_client():
+    sa_path = "keys.json"
+    with open(sa_path) as source:
+        info = json.load(source)
+    creds = service_account.Credentials.from_service_account_info(info)
+    return vision_v1.ImageAnnotatorClient(credentials=creds)
 
 
 async def calculate_cropped_size(original_width, original_height, target_width, target_height):
@@ -33,7 +43,8 @@ async def calculate_cropped_size(original_width, original_height, target_width, 
 
 
 def detect_faces(image_content, client):
-    response = client.face_detection(image={'content': image_content})
+    image = vision_v1.Image(content=image_content)
+    response = client.face_detection(image=image)
     faces = response.face_annotations
     return faces
 
@@ -50,8 +61,7 @@ async def process_image(image_path, client):
     loop = asyncio.get_event_loop()
     compressed_image_content = await loop.run_in_executor(None, compress_image, image_path)
 
-    response = await loop.run_in_executor(None, detect_faces, compressed_image_content, client)
-    faces = response
+    faces = await loop.run_in_executor(None, detect_faces, compressed_image_content, client)
 
     with open(image_path, 'rb') as image_file:
         pil_image = Image.open(image_file)
@@ -78,7 +88,7 @@ async def process_image(image_path, client):
         center_y = original_height / 2
 
         if faces:
-            face = faces[0]  # Tomar solo el primer rostro detectado
+            face = faces[0]
             min_x = face.bounding_poly.vertices[0].x
             min_y = face.bounding_poly.vertices[0].y
             max_x = face.bounding_poly.vertices[2].x
@@ -111,25 +121,22 @@ async def process_images_async(image_paths, output_folder='Piloto1', output_dpi=
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    client = vision_v1.ImageAnnotatorClient()
+    client = get_vision_client()
 
     batches = [image_paths[i:i + batch_size] for i in range(0, len(image_paths), batch_size)]
 
+    image_counter = 0
+
     with ThreadPoolExecutor(max_workers=5):
         for batch in batches:
-            tasks = []
-            for image_path in batch:
-                print("Procesando:", image_path)
-                task = process_image(image_path, client)
-                tasks.append(task)
+            tasks = [process_image(image_path, client) for image_path in batch]
             results = await asyncio.gather(*tasks)
 
             for i, result in enumerate(results):
                 original_image, adjusted_image = result
                 if original_image and adjusted_image:
-                    original_width, _ = original_image.size
-                    new_width, _ = adjusted_image.size
-                    adjusted_path = os.path.join(output_folder, f'AIModelOne-{i + 1}.jpg')
+                    image_counter += 1
+                    adjusted_path = os.path.join(output_folder, f'AIModelOne-{image_counter}.jpg')
                     adjusted_image.save(adjusted_path)
                     await adjust_image_resolution(adjusted_path, output_dpi)
                 else:
@@ -146,7 +153,7 @@ async def list_image_paths(folder_paths):
     image_paths = []
     for folder_path in folder_paths:
         if os.path.exists(folder_path):
-            for root, dirs, files in os.walk(folder_path):
+            for root, _, files in os.walk(folder_path):
                 for file in files:
                     if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                         image_paths.append(os.path.join(root, file))
@@ -157,7 +164,7 @@ async def list_image_paths(folder_paths):
 
 async def main():
     imgs_folders = [
-        "[/RUTA/]"
+        "[/PATH/]"
     ]
 
     image_paths = await list_image_paths(imgs_folders)
@@ -167,8 +174,6 @@ async def main():
 
 if __name__ == "__main__":
     start = time.time()
-
     asyncio.run(main())
-
     end = time.time()
     print(f"Se ha tardado {end - start} segundos")
