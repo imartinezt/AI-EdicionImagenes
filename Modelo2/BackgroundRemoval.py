@@ -43,11 +43,11 @@ async def detect_objects(image_content, client):
 async def remove_background_async(input_buffer):
     loop = asyncio.get_running_loop()
     with ProcessPoolExecutor() as executor:
-        return await loop.run_in_executor(executor, partial(remove, input_buffer, alpha_matting=False,
-                                                            alpha_matting_foreground_threshold=100,
-                                                            alpha_matting_background_threshold=50,
-                                                            alpha_matting_erode_structure_size=9,
-                                                            alpha_matting_erode_size=3))
+        return await loop.run_in_executor(executor, partial(remove, input_buffer, alpha_matting=True,
+                                                            alpha_matting_foreground_threshold=240,
+                                                            alpha_matting_background_threshold=10,
+                                                            alpha_matting_erode_structure_size=15,
+                                                            alpha_matting_erode_size=10))
 
 
 def correct_orientation(imagen):
@@ -95,7 +95,7 @@ async def process_image(image_path, client, output_folder, filename_prefix, i, c
                 *[(vertex.x * pil_image.width, vertex.y * pil_image.height) for vertex in object_vertices])
             left, top, right, bottom = min(x_coords), min(y_coords), max(x_coords), max(y_coords)
 
-            padding = max(pil_image.width, pil_image.height) * 0.12
+            padding = max(pil_image.width, pil_image.height) * 0.13
             left = max(0, left - padding)
             top = max(0, top - padding)
             right = min(pil_image.width, right + padding)
@@ -114,9 +114,11 @@ async def process_image(image_path, client, output_folder, filename_prefix, i, c
             transparent_image = transparent_image.resize(original_size, Image.LANCZOS)
 
             final_image = Image.new("RGB", (940, 1215), "white")
-            transparent_image.thumbnail((940, 1215), Image.LANCZOS)
+            transparent_image.thumbnail((890, 1165), Image.LANCZOS)
+
             x_center = (940 - transparent_image.width) // 2
             y_center = (1215 - transparent_image.height) // 2
+
             final_image.paste(transparent_image, (x_center, y_center), transparent_image)
 
             await save_adjusted_image_async(final_image, output_folder, filename_prefix, i)
@@ -139,11 +141,11 @@ async def worker(queue, client, output_folder, filename_prefix, cache):
         queue.task_done()
 
 
-async def process_images(image_folder, output_folder="Piloto2", max_tasks=10):
+async def process_images(image_folder, output_folder="Reloj", max_tasks=10):
     client = get_vision_client()
     os.makedirs(output_folder, exist_ok=True)
     image_paths = [os.path.join(image_folder, filename) for filename in os.listdir(image_folder) if
-                   filename.endswith((".jpg", ".jpeg", ".png"))]
+                   filename.lower().endswith((".jpg", ".jpeg", ".png"))]
 
     queue = asyncio.Queue()
     cache = OrderedDict()
@@ -153,7 +155,7 @@ async def process_images(image_folder, output_folder="Piloto2", max_tasks=10):
 
     workers = []
     for i in range(max_tasks):
-        worker_task = asyncio.create_task(worker(queue, client, output_folder, "AIModelTwo-", cache))
+        worker_task = asyncio.create_task(worker(queue, client, output_folder, "lentes-", cache))
         workers.append(worker_task)
 
     await queue.join()
@@ -165,7 +167,7 @@ async def process_images(image_folder, output_folder="Piloto2", max_tasks=10):
 
 
 async def main():
-    image_folder = "[/PATH/]"
+    image_folder = "/Path/"
     await asyncio.gather(process_images(image_folder))
 
 
