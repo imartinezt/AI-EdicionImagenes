@@ -28,7 +28,7 @@ Contacto: imartinezt@liverpool.com.mx
 
 
 def get_vision_client():
-    sa_path = "keys.json"
+    sa_path = "/Users/imartinezt/Documents/GitHub/AI-EdicionImagenes/keys.json"
     with open(sa_path) as source:
         info = json.load(source)
     creds = service_account.Credentials.from_service_account_info(info)
@@ -167,7 +167,7 @@ async def process_images(image_folder, output_folder="Reloj", max_tasks=10):
 
 
 async def main():
-    image_folder = "/Path/"
+    image_folder = "/Users/imartinezt/Downloads/EDICION_AI/LENTES/"
     await asyncio.gather(process_images(image_folder))
 
 
