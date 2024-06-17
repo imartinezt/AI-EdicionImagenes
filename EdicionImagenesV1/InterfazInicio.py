@@ -1,44 +1,22 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from concurrent.futures import ThreadPoolExecutor
 import os
 import threading
 import asyncio
+import time
+import model1
+import model2
+
+from tkinter import ttk, filedialog, messagebox
+from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageTk, UnidentifiedImageError, ImageSequence
-import sys
-import fcntl  # Unix-only
 
-# Importar métodos de model1 y model2
-from EdicionImagenesV1 import model1
-from EdicionImagenesV1 import model2
+"""
+@Autor: Iván Martínez Trejo, 
+| Foro Fotografico | Front end | Integracion de Modelos. 
+--> Front end para la integracion de los modelos Recorte puesta punto y sustitucion background. 
+Update 2.0
 
-
-class SingleInstance:
-
-    def __init__(self, filename):
-        self.fp = open(filename, 'w')
-        try:
-            fcntl.lockf(self.fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except IOError:
-            print("Another instance is running. Exiting.")
-            sys.exit(0)
-
-    def __del__(self):
-        try:
-            fcntl.lockf(self.fp, fcntl.LOCK_UN)
-        except IOError:
-            pass
-        self.fp.close()
-
-
-def resource_path(relative_path):
-    """ Get the absolute path to the resource, works for dev and for PyInstaller """
-    try:
-        # PyInstaller creates a temp folder and stores the path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+"""
 
 
 class ImageProcessingApp(tk.Tk):
@@ -51,7 +29,7 @@ class ImageProcessingApp(tk.Tk):
         self.model = None
         self.title("Edición de Imágenes 2.5")
         self.geometry("400x500")
-        self.config(bg="#FFC0CB")
+        self.config(bg="#FFC0CB")  # Fondo rosa claro
         self.style = ttk.Style(self)
         self.style.theme_use("clam")
         self.style.configure("TButton", background="#FF69B4", foreground="white", font=("Helvetica", 12, "bold"))
@@ -63,7 +41,8 @@ class ImageProcessingApp(tk.Tk):
     def model_selection(self):
         self.clear_window()
 
-        logo_image = Image.open(resource_path("Liverpool_logo.svg.png"))
+        # logotipo
+        logo_image = Image.open("Liverpool_logo.svg.png")
         logo_image = logo_image.resize((200, 50))
         logo_photo = ImageTk.PhotoImage(logo_image)
         lbl_logo = tk.Label(self, image=logo_photo, bg="#FFC0CB")
@@ -85,7 +64,7 @@ class ImageProcessingApp(tk.Tk):
         btn_exit = ttk.Button(self, text="Salir", command=self.quit, style="TButton")
         btn_exit.pack(pady=20)
 
-        # Agregar el pie de página
+        #  pie de página
         footer = ttk.Label(self, text="© 2024 Equipo de AI", background="#FFC0CB", font=("Helvetica", 10))
         footer.pack(side=tk.BOTTOM, pady=10)
 
@@ -151,9 +130,9 @@ class ImageProcessingApp(tk.Tk):
         lbl_loading = ttk.Label(self, text="Procesando imágenes, por favor espere...", background="#FFC0CB")
         lbl_loading.pack(pady=10)
 
-        # Mostrar una animación de carga si existe
+        # animación de carga si existe
         try:
-            loading_image = Image.open(resource_path("loading.gif"))
+            loading_image = Image.open("loading.gif")
             frames = [ImageTk.PhotoImage(frame) for frame in ImageSequence.Iterator(loading_image)]
             lbl_image = ttk.Label(self, background="#FFC0CB")
             lbl_image.pack(pady=10)
@@ -163,7 +142,7 @@ class ImageProcessingApp(tk.Tk):
                 if lbl.winfo_exists():
                     frame = frames[index]
                     lbl.configure(image=frame)
-                    lbl.image = frame  # Necesario para evitar que el frame sea recolectado por el GC
+                    lbl.image = frame
                     self.after(100, update_frame, (index + 1) % len(frames), lbl)
                 else:
                     print("Label no existe más, deteniendo la actualización de frames.")
@@ -174,6 +153,8 @@ class ImageProcessingApp(tk.Tk):
 
     def process_images(self):
         try:
+            start_time = time.time()
+
             if self.model == "Modelo 1":
                 thread_executor = ThreadPoolExecutor(max_workers=10)
                 process_executor = ThreadPoolExecutor(max_workers=14)
@@ -184,13 +165,16 @@ class ImageProcessingApp(tk.Tk):
             elif self.model == "Modelo 2":
                 asyncio.run(model2.process_images(self.folder_path))
 
-            self.show_completion_message()
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            self.show_completion_message(elapsed_time)
         except Exception as e:
             messagebox.showerror("Error", f"Ocurrió un error durante el procesamiento de imágenes: {str(e)}")
             print(f"Error procesando las imágenes: {str(e)}")
 
-    def show_completion_message(self):
-        messagebox.showinfo("Proceso Completado", "El proceso de procesamiento de imágenes ha sido completado.")
+    def show_completion_message(self, elapsed_time):
+        messagebox.showinfo("Proceso Completado", f"El proceso de procesamiento de imágenes ha sido completado.\n"
+                                                  f"Tiempo transcurrido: {elapsed_time:.2f} segundos.")
         self.ask_load_more_images()
 
     def ask_load_more_images(self):
@@ -202,6 +186,5 @@ class ImageProcessingApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    single_instance = SingleInstance('/tmp/interfaz_inicio.lock')
     app = ImageProcessingApp()
     app.mainloop()

@@ -9,11 +9,11 @@ DATA_FILES = [
 OPTIONS = {
     'argv_emulation': True,
     'packages': [
-        'PIL', 'asyncio', 'tkinter', 'torch', 'transformers', 'google.cloud', 'google.oauth2', 'rembg', 'aiofiles'
+        'PIL', 'asyncio', 'tkinter', 'torch', 'transformers', 'google.cloud', 'google.oauth2', 'rembg', 'aiofiles', 'rawpy'
     ],
     'includes': [
         'PIL', 'PIL.Image', 'PIL.ImageTk', 'PIL.UnidentifiedImageError', 'PIL.ImageSequence',
-        'asyncio', 'tkinter', 'torch', 'transformers', 'google.cloud', 'google.oauth2', 'rembg', 'aiofiles'
+        'asyncio', 'tkinter', 'torch', 'transformers', 'google.cloud', 'google.oauth2', 'rembg', 'aiofiles', 'rawpy'
     ],
     'excludes': ['tkinter.test', 'tkinter.tix', 'tkinter.scrolledtext']
 }
@@ -22,5 +22,5 @@ setup(
     app=APP,
     data_files=DATA_FILES,
     options={'py2app': OPTIONS},
-    setup_requires=['py2app', 'Pillow', 'torch', 'transformers', 'google-cloud-vision', 'rembg', 'aiofiles'],
+    setup_requires=['py2app', 'Pillow', 'torch', 'transformers', 'google-cloud-vision', 'rembg', 'aiofiles', 'rawpy'],
 )

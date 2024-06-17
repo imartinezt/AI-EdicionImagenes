@@ -1,14 +1,12 @@
 import asyncio
 import io
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
+import numpy as np
+import rawpy
 import torch
 from PIL import Image, ExifTags
 from transformers import DetrImageProcessor, DetrForObjectDetection
-import numpy as np
-import rawpy
 
 
 async def detect_objects(image_content, model, processor, thread_executor, threshold=0.1, target_classes=None):
@@ -220,27 +218,3 @@ async def list_image_paths(folder_paths):
         else:
             print(f"La carpeta {folder_path} no existe.")
     return image_paths
-
-
-async def main():
-    imgs_folders = [
-        "/path/"
-    ]
-
-    image_paths = await list_image_paths(imgs_folders)
-
-    thread_executor = ThreadPoolExecutor(max_workers=10)
-    process_executor = ProcessPoolExecutor(max_workers=14)
-
-    await asyncio.gather(
-        process_images_async(image_paths, thread_executor=thread_executor, process_executor=process_executor))
-
-    thread_executor.shutdown(wait=True)
-    process_executor.shutdown(wait=True)
-
-
-if __name__ == "__main__":
-    start = time.time()
-    asyncio.run(main())
-    end = time.time()
-    print(f"Se ha tardado {end - start} segundos")

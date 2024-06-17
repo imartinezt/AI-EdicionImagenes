@@ -1,10 +1,7 @@
 import asyncio
+import io
 import json
 import os
-import io
-import sys
-import time
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from functools import partial
 
 import aiofiles
@@ -15,18 +12,8 @@ from google.oauth2 import service_account
 from rembg import remove
 
 
-def resource_path(relative_path):
-    """ Get the absolute path to the resource, works for dev and for PyInstaller """
-    try:
-        # PyInstaller creates a temp folder and stores the path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
-
 def get_vision_client():
-    sa_path = resource_path("keys.json")
+    sa_path = "keys.json"
     with open(sa_path) as source:
         info = json.load(source)
     creds = service_account.Credentials.from_service_account_info(info)
@@ -41,12 +28,11 @@ async def detect_objects(image_content, client):
 
 async def remove_background_async(input_buffer):
     loop = asyncio.get_running_loop()
-    with ProcessPoolExecutor() as executor:
-        return await loop.run_in_executor(executor, partial(remove, input_buffer, alpha_matting=True,
-                                                            alpha_matting_foreground_threshold=240,
-                                                            alpha_matting_background_threshold=10,
-                                                            alpha_matting_erode_structure_size=15,
-                                                            alpha_matting_erode_size=10))
+    return await loop.run_in_executor(None, partial(remove, input_buffer, alpha_matting=True,
+                                                    alpha_matting_foreground_threshold=240,
+                                                    alpha_matting_background_threshold=10,
+                                                    alpha_matting_erode_structure_size=15,
+                                                    alpha_matting_erode_size=10))
 
 
 def correct_orientation(imagen):
@@ -67,78 +53,63 @@ def correct_orientation(imagen):
 
 async def correct_image_orientation_async(img):
     loop = asyncio.get_running_loop()
-    with ProcessPoolExecutor() as executor:
-        return await loop.run_in_executor(executor, correct_orientation, img)
+    return await loop.run_in_executor(None, correct_orientation, img)
 
 
 async def process_image(image_path, client, salida_folder, filename_prefix):
-    try:
-        start_time = time.time()
-        async with aiofiles.open(image_path, "rb") as image_file:
-            content = await image_file.read()
-        pil_image = Image.open(io.BytesIO(content))
+    async with aiofiles.open(image_path, "rb") as image_file:
+        content = await image_file.read()
 
-        orientation_task = correct_image_orientation_async(pil_image)
-        detection_task = detect_objects(content, client)
-        pil_image, detected_objects = await asyncio.gather(orientation_task, detection_task)
+    pil_image = Image.open(io.BytesIO(content))
 
-        if detected_objects:
-            object_vertices = [vertex for obj in detected_objects for vertex in obj.bounding_poly.normalized_vertices]
-            if object_vertices:
-                x_coords, y_coords = zip(
-                    *[(vertex.x * pil_image.width, vertex.y * pil_image.height) for vertex in object_vertices])
-                left, top, right, bottom = min(x_coords), min(y_coords), max(x_coords), max(y_coords)
+    orientation_task = correct_image_orientation_async(pil_image)
+    detection_task = detect_objects(content, client)
 
-                # Añadir margen dinámico alrededor del objeto detectado
-                object_width = right - left
-                object_height = bottom - top
-                margin_x = object_width * 0.1
-                margin_y = object_height * 0.1
+    pil_image, detected_objects = await asyncio.gather(orientation_task, detection_task)
 
-                left = max(left - margin_x, 1)
-                top = max(top - margin_y, 1)
-                right = min(right + margin_x, pil_image.width)
-                bottom = min(bottom + margin_y, pil_image.height)
+    if detected_objects:
+        object_vertices = [vertex for obj in detected_objects for vertex in obj.bounding_poly.normalized_vertices]
+        if object_vertices:
+            x_coords, y_coords = zip(
+                *[(vertex.x * pil_image.width, vertex.y * pil_image.height) for vertex in object_vertices])
+            left, top, right, bottom = min(x_coords), min(y_coords), max(x_coords), max(y_coords)
 
-                # Recortar el objeto
-                cropped_image = pil_image.crop((left, top, right, bottom))
-                image_buffer = io.BytesIO()
-                cropped_image.save(image_buffer, format="PNG")
-                image_buffer.seek(0)
+            object_width = right - left
+            object_height = bottom - top
+            margin_x = object_width * 0.1
+            margin_y = object_height * 0.1
 
-                # Remover el fondo
-                transparent_image_buffer = await remove_background_async(image_buffer.read())
-                transparent_image = Image.open(io.BytesIO(transparent_image_buffer))
+            left = max(left - margin_x, 1)
+            top = max(top - margin_y, 1)
+            right = min(right + margin_x, pil_image.width)
+            bottom = min(bottom + margin_y, pil_image.height)
 
-                # Crear un lienzo blanco con el tamaño final
-                final_width, final_height = 940, 1215
-                final_image = Image.new("RGB", (final_width, final_height), "white")
+            cropped_image = pil_image.crop((left, top, right, bottom))
+            image_buffer = io.BytesIO()
+            cropped_image.save(image_buffer, format="PNG")
+            image_buffer.seek(0)
 
-                # Redimensionar la imagen recortada sin fondo para ajustarla al lienzo blanco
-                object_width, object_height = transparent_image.size
-                aspect_ratio = object_width / object_height
+            transparent_image_buffer = await remove_background_async(image_buffer.read())
+            transparent_image = Image.open(io.BytesIO(transparent_image_buffer))
 
-                # Determinar nuevas dimensiones manteniendo la proporción
-                if aspect_ratio > final_width / final_height:
-                    new_width = final_width - 50
-                    new_height = int(new_width / aspect_ratio)
-                else:
-                    new_height = final_height - 50
-                    new_width = int(new_height * aspect_ratio)
+            final_width, final_height = 940, 1215
+            final_image = Image.new("RGB", (final_width, final_height), "white")
 
-                resized_image = transparent_image.resize((new_width, new_height), Image.LANCZOS)
-                x_center = (final_width - new_width) // 2
-                y_center = (final_height - new_height) // 2
+            object_width, object_height = transparent_image.size
+            aspect_ratio = object_width / object_height
 
-                # Pegar la imagen redimensionada en el lienzo blanco
-                final_image.paste(resized_image, (x_center, y_center), resized_image)
-                await save_adjusted_image_async(final_image, salida_folder, filename_prefix,
-                                                os.path.basename(image_path))
+            if aspect_ratio > final_width / final_height:
+                new_width = final_width - 50
+                new_height = int(new_width / aspect_ratio)
+            else:
+                new_height = final_height - 50
+                new_width = int(new_height * aspect_ratio)
 
-        end_time = time.time()
-        print(f"Processed {image_path} in {end_time - start_time} seconds")
-    except Exception as e:
-        print(f"Error processing image {image_path}: {e}")
+            resized_image = transparent_image.resize((new_width, new_height), Image.LANCZOS)
+            x_center = (final_width - new_width) // 2
+            y_center = (final_height - new_height) // 2
+            final_image.paste(resized_image, (x_center, y_center), resized_image)
+            await save_adjusted_image_async(final_image, salida_folder, filename_prefix, os.path.basename(image_path))
 
 
 async def save_adjusted_image_async(image, salida_folder, filename_prefix, original_filename):
@@ -146,8 +117,7 @@ async def save_adjusted_image_async(image, salida_folder, filename_prefix, origi
     filename = f"{filename_prefix}{filename}{ext}"
     output_path = os.path.join(salida_folder, filename)
     loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor() as executor:
-        await loop.run_in_executor(executor, partial(image.save, output_path, format='JPEG', dpi=(72, 72)))
+    await loop.run_in_executor(None, partial(image.save, output_path, format='JPEG', dpi=(72, 72)))
 
 
 output_folder = os.path.expanduser("~/Desktop/SalidaModel2AI")
@@ -184,15 +154,3 @@ async def worker(queue, client, salida_folder, filename_prefix):
             break
         await process_image(image_path, client, salida_folder, filename_prefix)
         queue.task_done()
-
-
-async def main():
-    image_folder = "/path/"
-    await process_images(image_folder)
-
-
-if __name__ == "__main__":
-    start = time.time()
-    asyncio.run(main())
-    end = time.time()
-    print(f"Se ha tardado {end - start:.2f} segundos")
