@@ -1,14 +1,12 @@
 import asyncio
 import io
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-
+import cv2
+import numpy as np
+import rawpy
 import torch
 from PIL import Image, ExifTags
 from transformers import DetrImageProcessor, DetrForObjectDetection
-import numpy as np
-import rawpy
 
 
 async def detect_objects(image_content, model, processor, thread_executor, threshold=0.1, target_classes=None):
@@ -60,53 +58,63 @@ async def compress_image(image_path, quality, process_executor):
     return await loop.run_in_executor(process_executor, compress_image_sync, image_path, quality)
 
 
-def crop_and_center_image_sync(image_array, object_bbox, target_size, margin=55):
-    min_x, min_y, max_x, max_y = [int(coord) for coord in object_bbox]
+def crop_and_center_image_sync(image_array, object_polygon, target_size, margin=55):
+    # Obtener el rectángulo delimitador del polígono
+    x, y, w, h = cv2.boundingRect(object_polygon)
 
-    object_width = max_x - min_x
-    object_height = max_y - min_y
+    object_width = w
+    object_height = h
 
-    margin_x = margin
-    margin_y = margin
-
-    min_x = max(min_x - margin_x, 0)
-    min_y = max(min_y - margin_y, 0)
-    max_x = min(max_x + margin_x, image_array.shape[1])
-    max_y = min(max_y + margin_y, image_array.shape[0])
-
-    center_x = (min_x + max_x) // 2
-    center_y = (min_y + max_y) // 2
+    # Calcular el centro del objeto detectado
+    center_x = x + w // 2
+    center_y = y + h // 2
 
     target_width, target_height = target_size
     aspect_ratio = target_width / target_height
 
+    # Calcular el ancho y alto del recorte manteniendo el aspecto
     if object_width / object_height > aspect_ratio:
-        crop_width = object_width + 2 * margin_x
+        crop_width = object_width + 2 * margin
         crop_height = crop_width / aspect_ratio
     else:
-        crop_height = object_height + 2 * margin_y
+        crop_height = object_height + 2 * margin
         crop_width = crop_height * aspect_ratio
 
+    # Calcular las coordenadas del recorte centrado
     new_left = max(int(center_x - crop_width // 2), 0)
     new_top = max(int(center_y - crop_height // 2), 0)
     new_right = min(new_left + int(crop_width), image_array.shape[1])
     new_bottom = min(new_top + int(crop_height), image_array.shape[0])
 
+    # Ajustar el recorte si es necesario
     if new_right - new_left < crop_width:
         new_left = max(int(new_right - crop_width), 0)
     if new_bottom - new_top < crop_height:
         new_top = max(int(new_bottom - crop_height), 0)
 
     cropped_image = image_array[new_top:new_bottom, new_left:new_right]
-    pil_cropped_image = Image.fromarray(cropped_image).resize(target_size, Image.BICUBIC)
+
+    # Ajustar el recorte para que sea exactamente del tamaño objetivo y centrado
+    cropped_height, cropped_width = cropped_image.shape[:2]
+    delta_w = target_width - cropped_width
+    delta_h = target_height - cropped_height
+
+    top, bottom = max(delta_h // 2, 0), max(delta_h - (delta_h // 2), 0)
+    left, right = max(delta_w // 2, 0), max(delta_w - (delta_w // 2), 0)
+
+    color = [0, 0, 0]  # Negro
+    new_image = cv2.copyMakeBorder(cropped_image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
+    new_image = cv2.resize(new_image, target_size)
+
+    pil_cropped_image = Image.fromarray(new_image)
 
     return pil_cropped_image
 
 
-async def crop_and_center_image(image_array, object_bbox, target_size, margin, process_executor):
+async def crop_and_center_image(image_array, object_polygon, target_size, margin, process_executor):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(process_executor, crop_and_center_image_sync, image_array,
-                                      object_bbox.detach().numpy(), target_size, margin)
+                                      object_polygon, target_size, margin)
 
 
 def save_image_sync(image, path, dpi):
@@ -130,7 +138,12 @@ async def process_image(image_path, model, processor, thread_executor, process_e
 
         if objects and 'boxes' in objects and len(objects['boxes']) > 0:
             first_object = objects['boxes'][0]
-            adjusted_image = await crop_and_center_image(image_array, first_object, (940, 1215), margin=200,
+            first_polygon = np.array([[int(first_object[0]), int(first_object[1])],
+                                      [int(first_object[2]), int(first_object[1])],
+                                      [int(first_object[2]), int(first_object[3])],
+                                      [int(first_object[0]), int(first_object[3])]])
+
+            adjusted_image = await crop_and_center_image(image_array, first_polygon, (940, 1215), margin=200,
                                                          process_executor=process_executor)
             return pil_image, adjusted_image
 
@@ -184,7 +197,7 @@ output_folder = os.path.expanduser("~/Desktop/SalidaModel1AI")
 os.makedirs(output_folder, exist_ok=True)
 
 
-async def process_images_async(image_paths, salida_folder="output_folder", output_dpi=72, batch_size=5,
+async def process_images_async(image_paths, salida_folder=output_folder, output_dpi=72, batch_size=5,
                                thread_executor=None, process_executor=None):
     if not os.path.exists(salida_folder):
         os.makedirs(salida_folder)
