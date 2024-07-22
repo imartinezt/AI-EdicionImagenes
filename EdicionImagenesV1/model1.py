@@ -1,12 +1,14 @@
 import asyncio
 import io
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
-import numpy as np
-import rawpy
 import torch
 from PIL import Image, ExifTags
 from transformers import DetrImageProcessor, DetrForObjectDetection
+import numpy as np
+import rawpy
 
 
 async def detect_objects(image_content, model, processor, thread_executor, threshold=0.1, target_classes=None):
@@ -96,8 +98,7 @@ def crop_and_center_image_sync(image_array, object_bbox, target_size, margin=55)
         new_top = max(int(new_bottom - crop_height), 0)
 
     cropped_image = image_array[new_top:new_bottom, new_left:new_right]
-    pil_cropped_image = Image.fromarray(cropped_image)
-    pil_cropped_image.thumbnail(target_size, Image.BICUBIC)
+    pil_cropped_image = Image.fromarray(cropped_image).resize(target_size, Image.BICUBIC)
 
     return pil_cropped_image
 
@@ -183,7 +184,7 @@ output_folder = os.path.expanduser("~/Desktop/SalidaModel1AI")
 os.makedirs(output_folder, exist_ok=True)
 
 
-async def process_images_async(image_paths, salida_folder=output_folder, output_dpi=72, batch_size=5,
+async def process_images_async(image_paths, salida_folder="output_folder", output_dpi=72, batch_size=5,
                                thread_executor=None, process_executor=None):
     if not os.path.exists(salida_folder):
         os.makedirs(salida_folder)
@@ -218,3 +219,4 @@ async def list_image_paths(folder_paths):
         else:
             print(f"La carpeta {folder_path} no existe.")
     return image_paths
+
