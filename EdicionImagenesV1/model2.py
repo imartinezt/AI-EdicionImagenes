@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import os
+import time
 from functools import partial
 
 import aiofiles
@@ -56,7 +57,7 @@ async def correct_image_orientation_async(img):
     return await loop.run_in_executor(None, correct_orientation, img)
 
 
-async def process_image(image_path, client, salida_folder, filename_prefix):
+async def process_image(image_path, client, salida_folder):
     async with aiofiles.open(image_path, "rb") as image_file:
         content = await image_file.read()
 
@@ -74,6 +75,7 @@ async def process_image(image_path, client, salida_folder, filename_prefix):
                 *[(vertex.x * pil_image.width, vertex.y * pil_image.height) for vertex in object_vertices])
             left, top, right, bottom = min(x_coords), min(y_coords), max(x_coords), max(y_coords)
 
+            # Añadir margen dinámico alrededor del objeto detectado
             object_width = right - left
             object_height = bottom - top
             margin_x = object_width * 0.1
@@ -84,20 +86,25 @@ async def process_image(image_path, client, salida_folder, filename_prefix):
             right = min(right + margin_x, pil_image.width)
             bottom = min(bottom + margin_y, pil_image.height)
 
+            # Recortar el objeto
             cropped_image = pil_image.crop((left, top, right, bottom))
             image_buffer = io.BytesIO()
             cropped_image.save(image_buffer, format="PNG")
             image_buffer.seek(0)
 
+            # Remover el fondo
             transparent_image_buffer = await remove_background_async(image_buffer.read())
             transparent_image = Image.open(io.BytesIO(transparent_image_buffer))
 
+            # Crear un lienzo blanco con el tamaño final
             final_width, final_height = 940, 1215
             final_image = Image.new("RGB", (final_width, final_height), "white")
 
+            # Redimensionar la imagen recortada sin fondo para ajustarla al lienzo blanco
             object_width, object_height = transparent_image.size
             aspect_ratio = object_width / object_height
 
+            # Determinar nuevas dimensiones manteniendo la proporción
             if aspect_ratio > final_width / final_height:
                 new_width = final_width - 50
                 new_height = int(new_width / aspect_ratio)
@@ -108,14 +115,14 @@ async def process_image(image_path, client, salida_folder, filename_prefix):
             resized_image = transparent_image.resize((new_width, new_height), Image.LANCZOS)
             x_center = (final_width - new_width) // 2
             y_center = (final_height - new_height) // 2
+
+            # Pegar la imagen redimensionada en el lienzo blanco
             final_image.paste(resized_image, (x_center, y_center), resized_image)
-            await save_adjusted_image_async(final_image, salida_folder, filename_prefix, os.path.basename(image_path))
+            await save_adjusted_image_async(final_image, salida_folder, os.path.basename(image_path))
 
 
-async def save_adjusted_image_async(image, salida_folder, filename_prefix, original_filename):
-    filename, ext = os.path.splitext(original_filename)
-    filename = f"{filename_prefix}{filename}{ext}"
-    output_path = os.path.join(salida_folder, filename)
+async def save_adjusted_image_async(image, salida_folder, original_filename):
+    output_path = os.path.join(salida_folder, original_filename)
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, partial(image.save, output_path, format='JPEG', dpi=(72, 72)))
 
@@ -136,7 +143,7 @@ async def process_images(image_folder, salida_folder=output_folder, max_tasks=10
 
     workers = []
     for i in range(max_tasks):
-        worker_task = asyncio.create_task(worker(queue, client, salida_folder, "AI-"))
+        worker_task = asyncio.create_task(worker(queue, client, salida_folder))
         workers.append(worker_task)
 
     await queue.join()
@@ -147,10 +154,22 @@ async def process_images(image_folder, salida_folder=output_folder, max_tasks=10
     await asyncio.gather(*workers)
 
 
-async def worker(queue, client, salida_folder, filename_prefix):
+async def worker(queue, client, salida_folder):
     while True:
         image_path, index = await queue.get()
         if image_path is None:
             break
-        await process_image(image_path, client, salida_folder, filename_prefix)
+        await process_image(image_path, client, salida_folder)
         queue.task_done()
+
+
+async def main():
+    image_folder = "/Users/imartinezt/Downloads/EDICION_AI/RELOJ"
+    await process_images(image_folder)
+
+
+if __name__ == "__main__":
+    start = time.time()
+    asyncio.run(main())
+    end = time.time()
+    print(f"Se ha tardado {end - start:.2f} segundos")
