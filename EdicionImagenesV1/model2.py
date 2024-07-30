@@ -23,15 +23,19 @@ def correct_orientation(image):
 
 
 def remove_background(input_image):
-    input_buffer = BytesIO()
-    input_image.save(input_buffer, format='PNG')
-    input_buffer.seek(0)
-    result = remove(input_buffer.getvalue(), alpha_matting=True,
-                    alpha_matting_foreground_threshold=220,
-                    alpha_matting_background_threshold=20,
-                    alpha_matting_erode_structure_size=15,
-                    alpha_matting_erode_size=10)
-    return Image.open(BytesIO(result))
+    try:
+        input_buffer = BytesIO()
+        input_image.save(input_buffer, format='PNG')
+        input_buffer.seek(0)
+        result = remove(input_buffer.getvalue(), alpha_matting=True,
+                        alpha_matting_foreground_threshold=220,
+                        alpha_matting_background_threshold=20,
+                        alpha_matting_erode_structure_size=15,
+                        alpha_matting_erode_size=10)
+        return Image.open(BytesIO(result))
+    except Exception as e:
+        print(f"Error removing background: {e}")
+        return input_image
 
 
 def process_single_image(image_path, output_path, margin=25, desired_width=940, desired_height=1215):
@@ -97,8 +101,7 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
         print(f"Error processing image {image_path}: {e}")
 
 
-def process_images_in_folder(input_folder, output_folder, margin=25, desired_width=940, desired_height=1215,
-                             num_workers=4):
+def process_images_in_folder(input_folder, output_folder, margin=25, desired_width=940, desired_height=1215, num_workers=4):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
@@ -110,7 +113,9 @@ def process_images_in_folder(input_folder, output_folder, margin=25, desired_wid
         for image_file in image_files:
             input_path = os.path.join(input_folder, image_file)
             output_path = os.path.join(output_folder, image_file)
-            futures.append(
-                executor.submit(process_single_image, input_path, output_path, margin, desired_width, desired_height))
+            futures.append(executor.submit(process_single_image, input_path, output_path, margin, desired_width, desired_height))
         for future in futures:
-            future.result()
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Error occurred: {e}")
