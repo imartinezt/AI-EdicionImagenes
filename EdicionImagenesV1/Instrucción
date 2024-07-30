@@ -1,1 +1,1 @@
-pyinstaller --onefile --add-data "img/Liverpool_logo.svg.png:img" --add-data "img/loading.gif:img" InterfazInicio.py
+pyinstaller --onefile --add-data "img\Liverpool_logo.svg.png;img" --add-data "img\loading.gif;img" InterfazInicio.py
