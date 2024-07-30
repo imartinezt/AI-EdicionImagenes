@@ -1,175 +1,116 @@
-import asyncio
-import io
-import json
 import os
-import time
-from functools import partial
+from concurrent.futures import ProcessPoolExecutor
+from io import BytesIO
 
-import aiofiles
 from PIL import Image, ExifTags
-from google.cloud import vision_v1
-from google.cloud.vision_v1 import types
-from google.oauth2 import service_account
 from rembg import remove
 
 
-def get_vision_client():
-    sa_path = "keys.json"
-    with open(sa_path) as source:
-        info = json.load(source)
-    creds = service_account.Credentials.from_service_account_info(info)
-    return vision_v1.ImageAnnotatorClient(credentials=creds)
-
-
-async def detect_objects(image_content, client):
-    loop = asyncio.get_running_loop()
-    response = await loop.run_in_executor(None, client.object_localization, types.Image(content=image_content))
-    return response.localized_object_annotations
-
-
-async def remove_background_async(input_buffer):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(remove, input_buffer, alpha_matting=True,
-                                                    alpha_matting_foreground_threshold=240,
-                                                    alpha_matting_background_threshold=10,
-                                                    alpha_matting_erode_structure_size=15,
-                                                    alpha_matting_erode_size=10))
-
-
-def correct_orientation(imagen):
+def correct_orientation(image):
     orientation_key = next((k for k, v in ExifTags.TAGS.items() if v == 'Orientation'), None)
     if not orientation_key:
-        return imagen
+        return image
     try:
-        exif = imagen.getexif()
+        exif = image.getexif()
         if exif is not None:
             orientation = exif.get(orientation_key)
             rotations = {3: 180, 6: 270, 8: 90}
             if orientation in rotations:
-                imagen = imagen.rotate(rotations[orientation], expand=True)
+                image = image.rotate(rotations[orientation], expand=True)
     except Exception as e:
         print(f"Error correcting orientation: {e}")
-    return imagen
+    return image
 
 
-async def correct_image_orientation_async(img):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, correct_orientation, img)
+def remove_background(input_image):
+    input_buffer = BytesIO()
+    input_image.save(input_buffer, format='PNG')
+    input_buffer.seek(0)
+    result = remove(input_buffer.getvalue(), alpha_matting=True,
+                    alpha_matting_foreground_threshold=220,
+                    alpha_matting_background_threshold=20,
+                    alpha_matting_erode_structure_size=15,
+                    alpha_matting_erode_size=10)
+    return Image.open(BytesIO(result))
 
 
-async def process_image(image_path, client, salida_folder):
-    async with aiofiles.open(image_path, "rb") as image_file:
-        content = await image_file.read()
+def process_single_image(image_path, output_path, margin=25, desired_width=940, desired_height=1215):
+    try:
+        with open(image_path, 'rb') as file:
+            image_data = file.read()
+        image = Image.open(BytesIO(image_data)).convert('RGB')
+        image = correct_orientation(image)
 
-    pil_image = Image.open(io.BytesIO(content))
+        # Eliminar el fondo utilizando rembg
+        image = remove_background(image)
 
-    orientation_task = correct_image_orientation_async(pil_image)
-    detection_task = detect_objects(content, client)
+        # Convertir la imagen a RGBA para manejar la transparencia
+        image = image.convert("RGBA")
 
-    pil_image, detected_objects = await asyncio.gather(orientation_task, detection_task)
+        # Obtener la caja delimitadora del objeto
+        bbox = image.getbbox()
 
-    if detected_objects:
-        object_vertices = [vertex for obj in detected_objects for vertex in obj.bounding_poly.normalized_vertices]
-        if object_vertices:
-            x_coords, y_coords = zip(
-                *[(vertex.x * pil_image.width, vertex.y * pil_image.height) for vertex in object_vertices])
-            left, top, right, bottom = min(x_coords), min(y_coords), max(x_coords), max(y_coords)
+        if bbox:
+            x1, y1, x2, y2 = bbox
+            box_width = x2 - x1
+            box_height = y2 - y1
 
-            # Añadir margen dinámico alrededor del objeto detectado
-            object_width = right - left
-            object_height = bottom - top
-            margin_x = object_width * 0.1
-            margin_y = object_height * 0.1
+            if box_height > box_width:  # Caja vertical, márgenes en Y
+                new_y1 = max(0, y1 - margin)
+                new_y2 = min(image.height, y2 + margin)
+                crop_height = new_y2 - new_y1
+                crop_width = crop_height * (desired_width / desired_height)
+                width_center = (x1 + x2) / 2
+                new_x1 = max(0, width_center - crop_width / 2)
+                new_x2 = min(image.width, width_center + crop_width / 2)
+            else:  # Caja horizontal, márgenes en X
+                new_x1 = max(0, x1 - margin)
+                new_x2 = min(image.width, x2 + margin)
+                crop_width = new_x2 - new_x1
+                crop_height = crop_width * (desired_height / desired_width)
+                height_center = (y1 + y2) / 2
+                new_y1 = max(0, height_center - crop_height / 2)
+                new_y2 = min(image.height, height_center + crop_height / 2)
 
-            left = max(left - margin_x, 1)
-            top = max(top - margin_y, 1)
-            right = min(right + margin_x, pil_image.width)
-            bottom = min(bottom + margin_y, pil_image.height)
+            # Realizar el recorte
+            cropped_image = image.crop((new_x1, new_y1, new_x2, new_y2))
 
-            # Recortar el objeto
-            cropped_image = pil_image.crop((left, top, right, bottom))
-            image_buffer = io.BytesIO()
-            cropped_image.save(image_buffer, format="PNG")
-            image_buffer.seek(0)
+            # Redimensionar a las dimensiones deseadas sin distorsión
+            scale = min(desired_width / cropped_image.width, desired_height / cropped_image.height)
+            new_size = (int(cropped_image.width * scale), int(cropped_image.height * scale))
+            resized_image = cropped_image.resize(new_size, Image.LANCZOS)
 
-            # Remover el fondo
-            transparent_image_buffer = await remove_background_async(image_buffer.read())
-            transparent_image = Image.open(io.BytesIO(transparent_image_buffer))
+            # Crear una imagen con fondo blanco
+            final_image_with_white_bg = Image.new("RGB", (desired_width, desired_height), (255, 255, 255))
+            top_left_x = (desired_width - resized_image.width) // 2
+            top_left_y = (desired_height - resized_image.height) // 2
+            final_image_with_white_bg.paste(resized_image, (top_left_x, top_left_y), resized_image)
 
-            # Crear un lienzo blanco con el tamaño final
-            final_width, final_height = 940, 1215
-            final_image = Image.new("RGB", (final_width, final_height), "white")
-
-            # Redimensionar la imagen recortada sin fondo para ajustarla al lienzo blanco
-            object_width, object_height = transparent_image.size
-            aspect_ratio = object_width / object_height
-
-            # Determinar nuevas dimensiones manteniendo la proporción
-            if aspect_ratio > final_width / final_height:
-                new_width = final_width - 50
-                new_height = int(new_width / aspect_ratio)
-            else:
-                new_height = final_height - 50
-                new_width = int(new_height * aspect_ratio)
-
-            resized_image = transparent_image.resize((new_width, new_height), Image.LANCZOS)
-            x_center = (final_width - new_width) // 2
-            y_center = (final_height - new_height) // 2
-
-            # Pegar la imagen redimensionada en el lienzo blanco
-            final_image.paste(resized_image, (x_center, y_center), resized_image)
-            await save_adjusted_image_async(final_image, salida_folder, os.path.basename(image_path))
-
-
-async def save_adjusted_image_async(image, salida_folder, original_filename):
-    output_path = os.path.join(salida_folder, original_filename)
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, partial(image.save, output_path, format='JPEG', dpi=(72, 72)))
+            output_buffer = BytesIO()
+            final_image_with_white_bg.save(output_buffer, format='JPEG')
+            with open(output_path, 'wb') as out_file:
+                out_file.write(output_buffer.getvalue())
+            print(f"Imagen procesada y guardada en: {output_path}")
+        else:
+            print(f"No se pudo obtener la caja delimitadora para la imagen: {image_path}")
+    except Exception as e:
+        print(f"Error processing image {image_path}: {e}")
 
 
-output_folder = os.path.expanduser("~/Desktop/SalidaModel2AI")
-os.makedirs(output_folder, exist_ok=True)
+def process_images_in_folder(input_folder, output_folder, margin=25, desired_width=940, desired_height=1215,
+                             num_workers=4):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
+    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+    image_files = [f for f in os.listdir(input_folder) if os.path.splitext(f)[1].lower() in image_extensions]
 
-async def process_images(image_folder, salida_folder=output_folder, max_tasks=10):
-    client = get_vision_client()
-    os.makedirs(salida_folder, exist_ok=True)
-    image_paths = [os.path.join(image_folder, filename) for filename in os.listdir(image_folder) if
-                   filename.lower().endswith((".jpg", ".jpeg", ".png"))]
-
-    queue = asyncio.Queue()
-    for index, path in enumerate(image_paths):
-        await queue.put((path, index + 1))
-
-    workers = []
-    for i in range(max_tasks):
-        worker_task = asyncio.create_task(worker(queue, client, salida_folder))
-        workers.append(worker_task)
-
-    await queue.join()
-
-    for i in range(max_tasks):
-        await queue.put((None, None))
-
-    await asyncio.gather(*workers)
-
-
-async def worker(queue, client, salida_folder):
-    while True:
-        image_path, index = await queue.get()
-        if image_path is None:
-            break
-        await process_image(image_path, client, salida_folder)
-        queue.task_done()
-
-
-async def main():
-    image_folder = "/Users/imartinezt/Downloads/EDICION_AI/RELOJ"
-    await process_images(image_folder)
-
-
-if __name__ == "__main__":
-    start = time.time()
-    asyncio.run(main())
-    end = time.time()
-    print(f"Se ha tardado {end - start:.2f} segundos")
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = []
+        for image_file in image_files:
+            input_path = os.path.join(input_folder, image_file)
+            output_path = os.path.join(output_folder, image_file)
+            futures.append(
+                executor.submit(process_single_image, input_path, output_path, margin, desired_width, desired_height))
+        for future in futures:
+            future.result()

@@ -1,54 +1,48 @@
 import asyncio
 import io
-import json
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures.process import ProcessPoolExecutor
-
+import cv2
+import numpy as np
+import rawpy
+import torch
 from PIL import Image, ExifTags
-from google.cloud import vision_v1
-from google.oauth2 import service_account
-
-"""
-@Autor: Iván Martínez Trejo.
-Contacto: imartinezt@liverpool.com.mx
- -- Edicion de Imagenes Modelo 1 | Foro Fotografico | v1.2
-        - Recorte centrado
-             - Lienzo a 940 px ancho X 1215 px de alto.
-             - Resolución 72 dpis.
-             - Formatos de imagen y peso: JPG y MB
-"""
+from transformers import DetrImageProcessor, DetrForObjectDetection
 
 
-def get_vision_client():
-    sa_path = "keys.json"
-    with open(sa_path) as source:
-        info = json.load(source)
-    creds = service_account.Credentials.from_service_account_info(info)
-    return vision_v1.ImageAnnotatorClient(credentials=creds)
+async def detect_objects(image_content, model, processor, thread_executor, threshold=0.1, target_classes=None):
+    if target_classes is None:
+        target_classes = ['person']
 
-
-async def calculate_cropped_size(original_width, original_height, target_width, target_height):
-    target_ratio = target_width / target_height
-    original_ratio = original_width / original_height
-
-    if original_ratio > target_ratio:
-        new_width = int(original_height * target_ratio)
-        new_height = original_height
-    else:
-        new_width = original_width
-        new_height = int(original_width / target_ratio)
-
-    return new_width, new_height
-
-
-async def detect_faces(image_content, client, thread_executor):
     loop = asyncio.get_event_loop()
-    image = vision_v1.Image(content=image_content)
-    response = await loop.run_in_executor(thread_executor, client.face_detection, image)
-    faces = response.face_annotations
-    return faces
+    try:
+        image = Image.open(io.BytesIO(image_content))
+        inputs = processor(images=image, return_tensors="pt")
+
+        with torch.no_grad():
+            outputs = await loop.run_in_executor(thread_executor, lambda: model(**inputs))
+
+        target_sizes = torch.tensor([image.size[::-1]])
+        results = processor.post_process_object_detection(outputs, target_sizes=target_sizes, threshold=threshold)[0]
+
+        filtered_boxes = []
+        filtered_scores = []
+        filtered_labels = []
+        for box, score, label in zip(results['boxes'], results['scores'], results['labels']):
+            if model.config.id2label[label.item()] in target_classes:
+                filtered_boxes.append(box)
+                filtered_scores.append(score)
+                filtered_labels.append(label)
+
+        filtered_results = {
+            'boxes': torch.stack(filtered_boxes) if filtered_boxes else torch.tensor([]),
+            'scores': torch.stack(filtered_scores) if filtered_scores else torch.tensor([]),
+            'labels': torch.stack(filtered_labels) if filtered_labels else torch.tensor([])
+        }
+
+        return filtered_results
+    except Exception as e:
+        print(f"Error processing image content: {e}")
+        return None
 
 
 def compress_image_sync(image_path, quality):
@@ -64,74 +58,132 @@ async def compress_image(image_path, quality, process_executor):
     return await loop.run_in_executor(process_executor, compress_image_sync, image_path, quality)
 
 
-async def process_image(image_path, client, thread_executor, process_executor):
+def crop_and_center_image_sync(image_array, object_polygon, target_size, margin=55):
+    # Obtener el rectángulo delimitador del polígono
+    x, y, w, h = cv2.boundingRect(object_polygon)
+
+    object_width = w
+    object_height = h
+
+    # Calcular el centro del objeto detectado
+    center_x = x + w // 2
+    center_y = y + h // 2
+
+    target_width, target_height = target_size
+    aspect_ratio = target_width / target_height
+
+    # Calcular el ancho y alto del recorte manteniendo el aspecto
+    if object_width / object_height > aspect_ratio:
+        crop_width = object_width + 2 * margin
+        crop_height = crop_width / aspect_ratio
+    else:
+        crop_height = object_height + 2 * margin
+        crop_width = crop_height * aspect_ratio
+
+    # Calcular las coordenadas del recorte centrado
+    new_left = max(int(center_x - crop_width // 2), 0)
+    new_top = max(int(center_y - crop_height // 2), 0)
+    new_right = min(new_left + int(crop_width), image_array.shape[1])
+    new_bottom = min(new_top + int(crop_height), image_array.shape[0])
+
+    # Ajustar el recorte si es necesario
+    if new_right - new_left < crop_width:
+        new_left = max(int(new_right - crop_width), 0)
+    if new_bottom - new_top < crop_height:
+        new_top = max(int(new_bottom - crop_height), 0)
+
+    cropped_image = image_array[new_top:new_bottom, new_left:new_right]
+
+    # Ajustar el recorte para que sea exactamente del tamaño objetivo y centrado
+    cropped_height, cropped_width = cropped_image.shape[:2]
+    delta_w = target_width - cropped_width
+    delta_h = target_height - cropped_height
+
+    top, bottom = max(delta_h // 2, 0), max(delta_h - (delta_h // 2), 0)
+    left, right = max(delta_w // 2, 0), max(delta_w - (delta_w // 2), 0)
+
+    color = [0, 0, 0]  # Negro
+    new_image = cv2.copyMakeBorder(cropped_image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
+    new_image = cv2.resize(new_image, target_size)
+
+    pil_cropped_image = Image.fromarray(new_image)
+
+    return pil_cropped_image
+
+
+async def crop_and_center_image(image_array, object_polygon, target_size, margin, process_executor):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(process_executor, crop_and_center_image_sync, image_array,
+                                      object_polygon, target_size, margin)
+
+
+def save_image_sync(image, path, dpi):
+    image.save(path, dpi=(dpi, dpi))
+
+
+async def save_image(image, path, dpi, thread_executor):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(thread_executor, save_image_sync, image, path, dpi)
+
+
+async def process_image(image_path, model, processor, thread_executor, process_executor):
     compressed_image_content = await compress_image(image_path, 70, process_executor)
-    faces = await detect_faces(compressed_image_content, client, thread_executor)
+    objects = await detect_objects(compressed_image_content, model, processor, thread_executor)
 
-    with open(image_path, 'rb') as image_file:
-        pil_image = Image.open(image_file)
+    pil_image = await load_image(image_path, thread_executor)
 
-        try:
-            orientation_tag = [tag for tag, description in ExifTags.TAGS.items() if description == 'Orientation'][0]
-            exif = pil_image.getexif()
+    if pil_image:
+        pil_image = await adjust_image_orientation(pil_image, thread_executor)
+        image_array = np.array(pil_image)
 
-            if exif is not None and orientation_tag in exif:
-                orientation_value = exif[orientation_tag]
-                orientation_dict = {3: 180, 6: 270, 8: 90}
-                rotation_angle = orientation_dict.get(orientation_value, 0)
+        if objects and 'boxes' in objects and len(objects['boxes']) > 0:
+            first_object = objects['boxes'][0]
+            first_polygon = np.array([[int(first_object[0]), int(first_object[1])],
+                                      [int(first_object[2]), int(first_object[1])],
+                                      [int(first_object[2]), int(first_object[3])],
+                                      [int(first_object[0]), int(first_object[3])]])
 
-                if rotation_angle:
-                    pil_image = pil_image.rotate(rotation_angle, expand=True)
-
-        except (AttributeError, KeyError, IndexError):
-            pass
-
-        original_width, original_height = pil_image.size
-        new_width, new_height = await calculate_cropped_size(original_width, original_height, 940, 1215)
-
-        center_x = original_width / 2
-        center_y = original_height / 2
-
-        if faces:
-            face = faces[0]
-            min_x = min(vertex.x for vertex in face.bounding_poly.vertices)
-            min_y = min(vertex.y for vertex in face.bounding_poly.vertices)
-            max_x = max(vertex.x for vertex in face.bounding_poly.vertices)
-            max_y = max(vertex.y for vertex in face.bounding_poly.vertices)
-
-            face_center_x = (min_x + max_x) / 2
-            face_center_y = (min_y + max_y) / 2
-
-            new_left = max(int(face_center_x - new_width / 2), 0)
-            new_top = max(int(face_center_y - new_height / 2), 0)
-            new_right = min(new_left + new_width, original_width)
-            new_bottom = min(new_top + new_height, original_height)
-
-            if new_right - new_left < new_width:
-                new_left = max(original_width - new_width, 0)
-                new_right = original_width
-
-            if new_bottom - new_top < new_height:
-                new_top = max(original_height - new_height, 0)
-                new_bottom = original_height
-
-        else:
-            new_left = max(int(center_x - new_width / 2), 0)
-            new_top = max(int(center_y - new_height / 2), 0)
-            new_right = min(new_left + new_width, original_width)
-            new_bottom = min(new_top + new_height, original_height)
-
-        if new_left < new_right and new_top < new_bottom:
-            cropped_image = pil_image.crop((new_left, new_top, new_right, new_bottom))
-            adjusted_image = cropped_image.resize((940, 1215))
-
+            adjusted_image = await crop_and_center_image(image_array, first_polygon, (940, 1215), margin=200,
+                                                         process_executor=process_executor)
             return pil_image, adjusted_image
 
     return None, None
 
 
-def save_image_sync(image, path, dpi):
-    image.save(path, dpi=(dpi, dpi))
+async def load_image(image_path, thread_executor):
+    loop = asyncio.get_event_loop()
+    try:
+        if image_path.lower().endswith(('.nef', '.cr2', '.arw', '.dng', '.rw2', '.orf', '.srw', '.raw')):
+            with rawpy.imread(image_path) as raw:
+                rgb_image = raw.postprocess()
+                pil_image = Image.fromarray(rgb_image)
+        else:
+            with open(image_path, 'rb') as image_file:
+                image_data = image_file.read()
+            pil_image = await loop.run_in_executor(thread_executor, Image.open, io.BytesIO(image_data))
+        return pil_image
+    except Exception as e:
+        print(f"Error loading image {image_path}: {e}")
+        return None
+
+
+async def adjust_image_orientation(pil_image, thread_executor):
+    loop = asyncio.get_event_loop()
+    try:
+        orientation_tag = [tag for tag, description in ExifTags.TAGS.items() if description == 'Orientation'][0]
+        exif = await loop.run_in_executor(thread_executor, pil_image.getexif)
+        if exif is not None and orientation_tag in exif:
+            orientation_value = exif[orientation_tag]
+            orientation_dict = {3: 180, 6: 270, 8: 90}
+            rotation_angle = orientation_dict.get(orientation_value, 0)
+
+            if rotation_angle:
+                pil_image = await loop.run_in_executor(thread_executor,
+                                                       lambda: pil_image.rotate(rotation_angle, expand=True))
+    except (AttributeError, KeyError, IndexError, Exception) as e:
+        print(f"Error adjusting image orientation: {e}")
+
+    return pil_image
 
 
 async def adjust_image_resolution(image_path, dpi, thread_executor):
@@ -141,30 +193,31 @@ async def adjust_image_resolution(image_path, dpi, thread_executor):
         await loop.run_in_executor(thread_executor, save_image_sync, img, image_path, dpi)
 
 
-async def process_images_async(image_paths, output_folder='Modelo-V2', output_dpi=72, batch_size=5, thread_executor=None,
-                               process_executor=None):
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
+output_folder = os.path.expanduser("~/Desktop/SalidaModel1AI")
+os.makedirs(output_folder, exist_ok=True)
 
-    client = get_vision_client()
+
+async def process_images_async(image_paths, salida_folder=output_folder, output_dpi=72, batch_size=5,
+                               thread_executor=None, process_executor=None):
+    if not os.path.exists(salida_folder):
+        os.makedirs(salida_folder)
+
+    processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
+    model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
 
     batches = [image_paths[i:i + batch_size] for i in range(0, len(image_paths), batch_size)]
 
-    image_counter = 0  # Add a counter to keep track of the global image index
-
     for batch in batches:
-        tasks = [process_image(image_path, client, thread_executor, process_executor) for image_path in batch]
+        tasks = [process_image(image_path, model, processor, thread_executor, process_executor) for image_path in batch]
         results = await asyncio.gather(*tasks)
 
-        for i, result in enumerate(results):
+        for result, image_path in zip(results, batch):
             original_image, adjusted_image = result
             if original_image and adjusted_image:
-                image_counter += 1  # Increment the counter for each processed image
-                adjusted_path = os.path.join(output_folder, f'ShootingV3-{image_counter}.jpg')
-                await asyncio.get_event_loop().run_in_executor(thread_executor, adjusted_image.save, adjusted_path)
-                await adjust_image_resolution(adjusted_path, output_dpi, thread_executor)
+                output_path = os.path.join(salida_folder, os.path.basename(image_path))
+                await save_image(adjusted_image, output_path, output_dpi, thread_executor)
             else:
-                print("No se pudo procesar la imagen.")
+                print(f"No se pudo procesar la imagen {os.path.basename(image_path)}.")
 
 
 async def list_image_paths(folder_paths):
@@ -173,31 +226,10 @@ async def list_image_paths(folder_paths):
         if os.path.exists(folder_path):
             for root, _, files in os.walk(folder_path):
                 for file in files:
-                    if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    if file.lower().endswith(
+                            ('.png', '.jpg', '.jpeg', '.nef', '.cr2', '.arw', '.dng', '.rw2', '.orf', '.srw', '.raw')):
                         image_paths.append(os.path.join(root, file))
         else:
             print(f"La carpeta {folder_path} no existe.")
     return image_paths
 
-
-async def main():
-    imgs_folders = [
-        "/Path/"
-    ]
-
-    image_paths = await list_image_paths(imgs_folders)
-
-    thread_executor = ThreadPoolExecutor(max_workers=10)
-    process_executor = ProcessPoolExecutor(max_workers=4)
-
-    await process_images_async(image_paths, thread_executor=thread_executor, process_executor=process_executor)
-
-    thread_executor.shutdown(wait=True)
-    process_executor.shutdown(wait=True)
-
-
-if __name__ == "__main__":
-    start = time.time()
-    asyncio.run(main())
-    end = time.time()
-    print(f"Se ha tardado {end - start} segundos")
