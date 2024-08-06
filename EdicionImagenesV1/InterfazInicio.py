@@ -19,7 +19,7 @@ class ImageProcessingApp(tk.Tk):
         self.model = None
         self.title("Edición de Imágenes 3.0.1")
         self.geometry("440x607")
-        self.configure(bg="#F3E5F5")  # Fondo rosa claro
+        self.configure(bg="#F3E5F5")
         self.style = ttk.Style(self)
         self.style.theme_use("clam")
         self.style.configure("TButton", background="#CE93D8", foreground="white", font=("Helvetica", 14, "bold"))
@@ -31,6 +31,7 @@ class ImageProcessingApp(tk.Tk):
     def model_selection(self):
         self.clear_window()
 
+        # logotipo
         logo_image = Image.open("Liverpool_logo.svg.png")
         logo_image = logo_image.resize((320, 70), Image.LANCZOS)
         logo_photo = ImageTk.PhotoImage(logo_image)
@@ -54,6 +55,7 @@ class ImageProcessingApp(tk.Tk):
         btn_exit = ttk.Button(self, text="Salir", command=self.quit, style="TButton")
         btn_exit.pack(pady=20)
 
+        # pie de página
         footer = ttk.Label(self, text="© 2024 Equipo de AI", background="#F3E5F5", font=("Helvetica", 12))
         footer.pack(side=tk.BOTTOM, pady=10)
 
@@ -124,6 +126,7 @@ class ImageProcessingApp(tk.Tk):
                                 font=("Helvetica", 16))
         lbl_loading.pack(pady=10)
 
+        # animación de carga si existe
         try:
             loading_image = Image.open("loading.gif")
             frames = []
@@ -157,9 +160,9 @@ class ImageProcessingApp(tk.Tk):
                 "~/Desktop/SalidaModel1AI" if self.model == "Modelo 1" else "~/Desktop/SalidaModel2AI")
 
             if self.model == "Modelo 1":
-                asyncio.run(model1.process_images_in_folder(self.folder_path, output_folder))
+                asyncio.run(self.process_model1_images(output_folder))
             elif self.model == "Modelo 2":
-                model2.process_images_in_folder(self.folder_path, output_folder)
+                self.process_model2_images(output_folder)
 
             end_time = time.time()
             elapsed_time = end_time - start_time
@@ -167,6 +170,12 @@ class ImageProcessingApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Ocurrió un error durante el procesamiento de imágenes: {str(e)}")
             print(f"Error procesando las imágenes: {str(e)}")
+
+    async def process_model1_images(self, output_folder):
+        await model1.process_images_in_folder(self.folder_path, output_folder)
+
+    def process_model2_images(self, output_folder):
+        model2.process_images_in_folder(self.folder_path, output_folder)
 
     def show_completion_message(self, elapsed_time):
         messagebox.showinfo("Proceso Completado", f"El proceso de Edición de imágenes ha sido completado.\n"
