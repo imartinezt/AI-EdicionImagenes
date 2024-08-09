@@ -101,7 +101,7 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
         print(f"Error processing image {image_path}: {e}")
 
 
-def process_images_in_folder(input_folder, output_folder, margin=25, desired_width=940, desired_height=1215, num_workers=4):
+""" def process_images_in_folder(input_folder, output_folder, margin=25, desired_width=940, desired_height=1215, num_workers=4):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
@@ -119,3 +119,17 @@ def process_images_in_folder(input_folder, output_folder, margin=25, desired_wid
                 future.result()
             except Exception as e:
                 print(f"Error occurred: {e}")
+ """
+
+def process_images_in_folder(input_folder, output_folder, margin=25, desired_width=940, desired_height=1215):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+    image_files = [f for f in os.listdir(input_folder) if os.path.splitext(f)[1].lower() in image_extensions]
+
+    for image_file in image_files:
+        input_path = os.path.join(input_folder, image_file)
+        output_path = os.path.join(output_folder, image_file)
+
+        process_single_image(input_path, output_path, margin, desired_width, desired_height)
