@@ -1,9 +1,9 @@
 import asyncio
 import os
 import time
-
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 from PIL import Image, ExifTags
 from transformers import DetrImageProcessor, DetrForObjectDetection
 
@@ -28,10 +28,10 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
     try:
         image = Image.open(image_path)
         image = correct_orientation(image)
+
         processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
         model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
 
-        # Detectar objetos en la imagen
         inputs = processor(images=image, return_tensors="pt")
         outputs = model(**inputs)
         target_sizes = torch.tensor([image.size[::-1]])
@@ -39,7 +39,7 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
         boxes = results["boxes"].detach().numpy()
         scores = results["scores"].detach().numpy()
 
-        # Obtener la caja delimitadora más grande
+
         largest_box = boxes[np.argmax(scores)]
         x1, y1, x2, y2 = largest_box
 
@@ -47,34 +47,33 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
         new_y1 = max(0, y1 - margin)
         new_y2 = min(image.height, y2 + margin)
 
+        # proprociones
         crop_height = new_y2 - new_y1
         crop_width = crop_height * (desired_width / desired_height)
-
-
         width_center = (x1 + x2) / 2
+
+        # valid para que no exceda bordes
         new_x1 = max(0, width_center - crop_width / 2)
         new_x2 = min(image.width, width_center + crop_width / 2)
 
-
+        # Recortar la imagen
         cropped_image = image.crop((new_x1, new_y1, new_x2, new_y2))
 
+        # Redimensionar proporcionalmente al lado más largo
+        cropped_image.thumbnail((desired_width, desired_height), Image.LANCZOS)
 
-        scale_x = desired_width / cropped_image.width
-        scale_y = desired_height / cropped_image.height
-        scale = max(scale_x, scale_y)
+        # check de  las dimensiones finales y ajustar mediante recorte
+        final_image = cropped_image
 
-        new_size = (int(cropped_image.width * scale), int(cropped_image.height * scale))
-        resized_image = cropped_image.resize(new_size, Image.LANCZOS)
+        if final_image.width > desired_width:
+            excess_width = (final_image.width - desired_width) // 2
+            final_image = final_image.crop((excess_width, 0, final_image.width - excess_width, final_image.height))
 
-        # encaje del lienzo
-        final_image = resized_image.crop((
-            (resized_image.width - desired_width) // 2,
-            (resized_image.height - desired_height) // 2,
-            (resized_image.width + desired_width) // 2,
-            (resized_image.height + desired_height) // 2
-        ))
+        if final_image.height > desired_height:
+            excess_height = (final_image.height - desired_height) // 2
+            final_image = final_image.crop((0, excess_height, final_image.width, final_image.height - excess_height))
 
-        # Guardar la imagen final procesada con resolución de 72 DPI
+        # Guardar la imagen final
         final_image.save(output_path, format='JPEG', dpi=(72, 72))
         print(f"Imagen procesada y guardada en: {output_path}")
     except Exception as e:
@@ -104,7 +103,7 @@ async def process_images_in_folder(input_folder, salida_folder, margin=25, desir
 
 
 def main():
-    input_folder = "/Users/imartinezt/Downloads/EDICION_AI/Shooting_Dinamico"
+    input_folder = "/Users/imartinezt/Downloads/EDICION_AI/pruebas"
     output_folder = "/Users/imartinezt/Desktop/SalidaModel1AI"
     asyncio.run(process_images_in_folder(input_folder, output_folder))
 
