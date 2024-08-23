@@ -1,5 +1,7 @@
 import asyncio
 import os
+import time
+
 import numpy as np
 import torch
 from PIL import Image, ExifTags
@@ -41,25 +43,39 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
         largest_box = boxes[np.argmax(scores)]
         x1, y1, x2, y2 = largest_box
 
-        # Calcular el centro horizontal y añadir márgenes en el eje Y
-        width_center = (x1 + x2) / 2
+        # Ajuste de la caja delimitadora para añadir margen solo en el eje Y
         new_y1 = max(0, y1 - margin)
         new_y2 = min(image.height, y2 + margin)
 
-        # Calcular el nuevo recorte centrado en el objeto
         crop_height = new_y2 - new_y1
         crop_width = crop_height * (desired_width / desired_height)
 
-        # Asegurarse de que el recorte esté dentro de los límites de la imagen
+
+        width_center = (x1 + x2) / 2
         new_x1 = max(0, width_center - crop_width / 2)
         new_x2 = min(image.width, width_center + crop_width / 2)
 
-        # Realizar el recorte
+
         cropped_image = image.crop((new_x1, new_y1, new_x2, new_y2))
 
-        # Redimensionar a las dimensiones deseadas
-        final_image = cropped_image.resize((desired_width, desired_height), Image.LANCZOS)
-        final_image.save(output_path)
+
+        scale_x = desired_width / cropped_image.width
+        scale_y = desired_height / cropped_image.height
+        scale = max(scale_x, scale_y)
+
+        new_size = (int(cropped_image.width * scale), int(cropped_image.height * scale))
+        resized_image = cropped_image.resize(new_size, Image.LANCZOS)
+
+        # encaje del lienzo
+        final_image = resized_image.crop((
+            (resized_image.width - desired_width) // 2,
+            (resized_image.height - desired_height) // 2,
+            (resized_image.width + desired_width) // 2,
+            (resized_image.height + desired_height) // 2
+        ))
+
+        # Guardar la imagen final procesada con resolución de 72 DPI
+        final_image.save(output_path, format='JPEG', dpi=(72, 72))
         print(f"Imagen procesada y guardada en: {output_path}")
     except Exception as e:
         print(f"Error processing image {image_path}: {e}")
@@ -85,3 +101,16 @@ async def process_images_in_folder(input_folder, salida_folder, margin=25, desir
         tasks.append(process_image(image_file, input_folder, salida_folder, margin, desired_width, desired_height))
 
     await asyncio.gather(*tasks)
+
+
+def main():
+    input_folder = "/Users/imartinezt/Downloads/EDICION_AI/Shooting_Dinamico"
+    output_folder = "/Users/imartinezt/Desktop/SalidaModel1AI"
+    asyncio.run(process_images_in_folder(input_folder, output_folder))
+
+
+if __name__ == "__main__":
+    start = time.time()
+    main()
+    end = time.time()
+    print(f"Se ha tardado {end - start} segundos")
