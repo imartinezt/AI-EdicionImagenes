@@ -1,9 +1,8 @@
 import os
-from concurrent.futures import ProcessPoolExecutor
 from io import BytesIO
-
 from PIL import Image, ExifTags
 from rembg import remove
+from multiprocessing import Pool, cpu_count
 
 
 def correct_orientation(image):
@@ -29,16 +28,17 @@ def remove_background(input_image):
         input_buffer.seek(0)
         result = remove(input_buffer.getvalue(), alpha_matting=True,
                         alpha_matting_foreground_threshold=220,
-                        alpha_matting_background_threshold=20,
-                        alpha_matting_erode_structure_size=15,
-                        alpha_matting_erode_size=10)
+                        alpha_matting_background_threshold=10,
+                        alpha_matting_erode_structure_size=5,
+                        alpha_matting_erode_size=5)
         return Image.open(BytesIO(result))
     except Exception as e:
         print(f"Error removing background: {e}")
         return input_image
 
 
-def process_single_image(image_path, output_path, margin=25, desired_width=940, desired_height=1215):
+def process_single_image(args):
+    image_path, output_path, margin, desired_width, desired_height = args
     try:
         with open(image_path, 'rb') as file:
             image_data = file.read()
@@ -90,36 +90,14 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
             top_left_y = (desired_height - resized_image.height) // 2
             final_image_with_white_bg.paste(resized_image, (top_left_x, top_left_y), resized_image)
 
-            output_buffer = BytesIO()
-            final_image_with_white_bg.save(output_buffer, format='JPEG')
-            with open(output_path, 'wb') as out_file:
-                out_file.write(output_buffer.getvalue())
+            # Guardar la imagen final con 72 DPI
+            final_image_with_white_bg.save(output_path, format='JPEG', dpi=(72, 72))
             print(f"Imagen procesada y guardada en: {output_path}")
         else:
             print(f"No se pudo obtener la caja delimitadora para la imagen: {image_path}")
     except Exception as e:
         print(f"Error processing image {image_path}: {e}")
 
-
-""" def process_images_in_folder(input_folder, output_folder, margin=25, desired_width=940, desired_height=1215, num_workers=4):
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
-    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
-    image_files = [f for f in os.listdir(input_folder) if os.path.splitext(f)[1].lower() in image_extensions]
-
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = []
-        for image_file in image_files:
-            input_path = os.path.join(input_folder, image_file)
-            output_path = os.path.join(output_folder, image_file)
-            futures.append(executor.submit(process_single_image, input_path, output_path, margin, desired_width, desired_height))
-        for future in futures:
-            try:
-                future.result()
-            except Exception as e:
-                print(f"Error occurred: {e}")
- """
 
 def process_images_in_folder(input_folder, output_folder, margin=25, desired_width=940, desired_height=1215):
     if not os.path.exists(output_folder):
@@ -128,8 +106,10 @@ def process_images_in_folder(input_folder, output_folder, margin=25, desired_wid
     image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
     image_files = [f for f in os.listdir(input_folder) if os.path.splitext(f)[1].lower() in image_extensions]
 
-    for image_file in image_files:
-        input_path = os.path.join(input_folder, image_file)
-        output_path = os.path.join(output_folder, image_file)
+    # Preparar los argumentos para cada proceso
+    tasks = [(os.path.join(input_folder, image_file), os.path.join(output_folder, image_file),
+              margin, desired_width, desired_height) for image_file in image_files]
 
-        process_single_image(input_path, output_path, margin, desired_width, desired_height)
+    # Usar multiprocessing para procesar en paralelo
+    with Pool(cpu_count()) as pool:
+        pool.map(process_single_image, tasks)

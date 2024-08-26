@@ -1,10 +1,11 @@
 import asyncio
 import os
-import time
 
 import numpy as np
 import torch
 from PIL import Image, ExifTags
+from skimage.transform import resize
+from skimage.util import img_as_ubyte
 from transformers import DetrImageProcessor, DetrForObjectDetection
 
 
@@ -24,12 +25,16 @@ def correct_orientation(imagen):
     return imagen
 
 
+# mejor version
 def process_single_image(image_path, output_path, margin=25, desired_width=940, desired_height=1215):
     try:
         image = Image.open(image_path)
         image = correct_orientation(image)
         processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
         model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
+
+        # Convertir a formato numpy para usar con OpenCV
+        image_np = np.array(image)
 
         # Detectar objetos en la imagen
         inputs = processor(images=image, return_tensors="pt")
@@ -42,53 +47,103 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
         # Obtener la caja delimitadora más grande
         largest_box = boxes[np.argmax(scores)]
         x1, y1, x2, y2 = largest_box
-        print(f"Bounding box coordinates: {x1, y1, x2, y2}")
-        PADDING_PORCENTAJE = 0.1
-        if PADDING_PORCENTAJE:
-            PADDING_X = int(PADDING_PORCENTAJE * (x2 - x1))
-            PADDING_Y = int(PADDING_PORCENTAJE * (y2 - y1))
-            
-        x1 = max(0, x1 - PADDING_X)
-        x2 = min(image.width, x2 + PADDING_X)
-        y1 = max(0, y1 - PADDING_Y)
-        y2 = min(image.height, y2 + PADDING_Y)
 
-        # Ajuste de la caja delimitadora para añadir margen solo en el eje Y
-        new_y1 = max(0, y1 - margin)
-        new_y2 = min(image.height, y2 + margin)
+        # Calcular la altura y el ancho del objeto detectado
+        detected_width = x2 - x1
+        detected_height = y2 - y1
 
-        crop_height = new_y2 - new_y1
-        crop_width = crop_height * (desired_width / desired_height)
+        # Regla 1: Si el objeto cubre completamente el eje Y de la imagen o más del 90%
+        image_height, image_width = image_np.shape[:2]
+        if (y1 <= 0 and y2 >= image_height) or (detected_height >= 0.9 * image_height):
+            print("La caja delimitadora cubre más del 90% del eje Y, aplicando recorte centrado y proporcional.")
+            center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
+            aspect_ratio = desired_width / desired_height
 
+            # Mantener la proporción, ajustando el recorte de forma centrada
+            if detected_width / detected_height > aspect_ratio:
+                new_crop_height = detected_height
+                new_crop_width = new_crop_height * aspect_ratio
+            else:
+                new_crop_width = detected_width
+                new_crop_height = new_crop_width / aspect_ratio
 
-        width_center = (x1 + x2) / 2
-        new_x1 = max(0, width_center - crop_width / 2)
-        new_x2 = min(image.width, width_center + crop_width / 2)
+            # Calcular las coordenadas del recorte centrado
+            new_x1 = max(0, center_x - new_crop_width / 2)
+            new_x2 = min(image_width, center_x + new_crop_width / 2)
+            new_y1 = max(0, center_y - new_crop_height / 2)
+            new_y2 = min(image_height, center_y + new_crop_height / 2)
 
+            # Recortar la imagen
+            cropped_image = image_np[int(new_y1):int(new_y2), int(new_x1):int(new_x2)]
 
-        cropped_image = image.crop((new_x1, new_y1, new_x2, new_y2))
+        # Regla 2: Agregar margen solo en la parte superior o inferior según la disponibilidad de espacio
+        elif y1 - margin >= 0 or y2 + margin <= image.height:
+            if y1 - margin >= 0 and y2 + margin > image.height:
+                print("Aplicando margen solo en la parte superior.")
+                new_y1 = max(0, y1 - margin)
+                new_y2 = y2
+            elif y2 + margin <= image_height and y1 - margin < 0:
+                print("Aplicando margen solo en la parte inferior.")
+                new_y1 = y1
+                new_y2 = min(image_height, y2 + margin)
+            else:
+                new_y1 = max(0, y1 - margin)
+                new_y2 = min(image_height, y2 + margin)
 
+            crop_width = x2 - x1
+            crop_height = new_y2 - new_y1
+            aspect_ratio = desired_width / desired_height
+            current_aspect_ratio = crop_width / crop_height
 
-        scale_x = desired_width / cropped_image.width
-        scale_y = desired_height / cropped_image.height
-        scale = max(scale_x, scale_y)
+            if current_aspect_ratio > aspect_ratio:
+                crop_height = crop_width / aspect_ratio
+                new_y1 = max(0, (y1 + y2) / 2 - crop_height / 2)
+                new_y2 = min(image_height, new_y1 + crop_height)
+            else:
+                crop_width = crop_height * aspect_ratio
+                new_x1 = max(0, (x1 + x2) / 2 - crop_width / 2)
+                new_x2 = min(image_width, new_x1 + crop_width)
 
-        new_size = (int(cropped_image.width * scale), int(cropped_image.height * scale))
-        resized_image = cropped_image.resize(new_size, Image.LANCZOS)
+            cropped_image = image_np[int(new_y1):int(new_y2), int(new_x1):int(new_x2)]
 
-        # encaje del lienzo
-        final_image = resized_image.crop((
-            (resized_image.width - desired_width) // 2,
-            (resized_image.height - desired_height) // 2,
-            (resized_image.width + desired_width) // 2,
-            (resized_image.height + desired_height) // 2
-        ))
+        # Regla 3: Si hay espacio tanto en la parte superior como en la inferior
+        else:
+            print("Aplicando lógica de cuerpo completo.")
+            width_center = (x1 + x2) / 2
+            new_y1 = max(0, y1 - margin)
+            new_y2 = min(image_height, y2 + margin)
 
-        # Guardar la imagen final procesada con resolución de 72 DPI
-        final_image.save(output_path, format='JPEG', dpi=(72, 72))
+            crop_width = x2 - x1
+            crop_height = new_y2 - new_y1
+            aspect_ratio = desired_width / desired_height
+            current_aspect_ratio = crop_width / crop_height
+
+            if current_aspect_ratio > aspect_ratio:
+                crop_height = crop_width / aspect_ratio
+                new_y1 = max(0, (y1 + y2) / 2 - crop_height / 2)
+                new_y2 = min(image_height, new_y1 + crop_height)
+            else:
+                crop_width = crop_height * aspect_ratio
+                new_x1 = max(0, width_center - crop_width / 2)
+                new_x2 = min(image_width, width_center + crop_width / 2)
+
+            cropped_image = image_np[int(new_y1):int(new_y2), int(new_x1):int(new_x2)]
+
+        # Convertir la imagen recortada a formato numpy para skimage
+        cropped_image_skimage = np.array(cropped_image)
+
+        # Redimensionar la imagen con skimage sin distorsión
+        final_image = resize(cropped_image_skimage, (desired_height, desired_width), anti_aliasing=True)
+
+        # Convertir de vuelta a un formato de imagen PIL
+        final_image_pil = Image.fromarray(img_as_ubyte(final_image))
+
+        final_image_pil.save(output_path)
         print(f"Imagen procesada y guardada en: {output_path}")
+
     except Exception as e:
-        print(f"Error processing image {image_path}: {e}")
+        print(f"Error procesando la imagen {image_path}: {e}")
 
 
 async def process_image(image_file, input_folder, output_folder, margin=25, desired_width=940, desired_height=1215):
@@ -111,16 +166,3 @@ async def process_images_in_folder(input_folder, salida_folder, margin=25, desir
         tasks.append(process_image(image_file, input_folder, salida_folder, margin, desired_width, desired_height))
 
     await asyncio.gather(*tasks)
-
-
-def main():
-    input_folder = "test_imgs/input"
-    output_folder = "test_imgs/output"
-    asyncio.run(process_images_in_folder(input_folder, output_folder))
-
-
-if __name__ == "__main__":
-    start = time.time()
-    main()
-    end = time.time()
-    print(f"Se ha tardado {end - start} segundos")
