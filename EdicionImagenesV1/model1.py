@@ -32,11 +32,8 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
         image = correct_orientation(image)
         processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
         model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
-
-        # Convertir a formato numpy para usar con OpenCV
         image_np = np.array(image)
 
-        # Detectar objetos en la imagen
         inputs = processor(images=image, return_tensors="pt")
         outputs = model(**inputs)
         target_sizes = torch.tensor([image.size[::-1]])
@@ -44,15 +41,13 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
         boxes = results["boxes"].detach().numpy()
         scores = results["scores"].detach().numpy()
 
-        # Obtener la caja delimitadora más grande
         largest_box = boxes[np.argmax(scores)]
         x1, y1, x2, y2 = largest_box
 
-        # Calcular la altura y el ancho del objeto detectado
         detected_width = x2 - x1
         detected_height = y2 - y1
 
-        # Regla 1: Si el objeto cubre completamente el eje Y de la imagen o más del 90%
+        # Regla 1
         image_height, image_width = image_np.shape[:2]
         if (y1 <= 0 and y2 >= image_height) or (detected_height >= 0.9 * image_height):
             print("La caja delimitadora cubre más del 90% del eje Y, aplicando recorte centrado y proporcional.")
@@ -60,7 +55,6 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
             center_y = (y1 + y2) / 2
             aspect_ratio = desired_width / desired_height
 
-            # Mantener la proporción, ajustando el recorte de forma centrada
             if detected_width / detected_height > aspect_ratio:
                 new_crop_height = detected_height
                 new_crop_width = new_crop_height * aspect_ratio
@@ -68,16 +62,14 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
                 new_crop_width = detected_width
                 new_crop_height = new_crop_width / aspect_ratio
 
-            # Calcular las coordenadas del recorte centrado
             new_x1 = max(0, center_x - new_crop_width / 2)
             new_x2 = min(image_width, center_x + new_crop_width / 2)
             new_y1 = max(0, center_y - new_crop_height / 2)
             new_y2 = min(image_height, center_y + new_crop_height / 2)
 
-            # Recortar la imagen
             cropped_image = image_np[int(new_y1):int(new_y2), int(new_x1):int(new_x2)]
 
-        # Regla 2: Agregar margen solo en la parte superior o inferior según la disponibilidad de espacio
+        # Regla 2
         elif y1 - margin >= 0 or y2 + margin <= image.height:
             if y1 - margin >= 0 and y2 + margin > image.height:
                 print("Aplicando margen solo en la parte superior.")
@@ -107,7 +99,7 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
 
             cropped_image = image_np[int(new_y1):int(new_y2), int(new_x1):int(new_x2)]
 
-        # Regla 3: Si hay espacio tanto en la parte superior como en la inferior
+        # Regla 3
         else:
             print("Aplicando lógica de cuerpo completo.")
             width_center = (x1 + x2) / 2
@@ -130,16 +122,11 @@ def process_single_image(image_path, output_path, margin=25, desired_width=940, 
 
             cropped_image = image_np[int(new_y1):int(new_y2), int(new_x1):int(new_x2)]
 
-        # Convertir la imagen recortada a formato numpy para skimage
         cropped_image_skimage = np.array(cropped_image)
-
-        # Redimensionar la imagen con skimage sin distorsión
         final_image = resize(cropped_image_skimage, (desired_height, desired_width), anti_aliasing=True)
-
-        # Convertir de vuelta a un formato de imagen PIL
         final_image_pil = Image.fromarray(img_as_ubyte(final_image))
 
-        final_image_pil.save(output_path)
+        final_image_pil.save(output_path, dpi=(72, 72))
         print(f"Imagen procesada y guardada en: {output_path}")
 
     except Exception as e:
