@@ -31,11 +31,8 @@ class Model1Processor:
 
     def process_single_image(self, image_path, output_path, margin=25, desired_width=940, desired_height=1215):
         try:
-            # Cargar la imagen y corregir la orientación
             image = Image.open(image_path)
             image = correct_orientation(image)
-
-            # Convertir la imagen a un array de NumPy
             image_np = np.array(image)
 
             boxes, scores = self.process_model(image_np)
@@ -177,7 +174,6 @@ class Model1Processor:
         return Image.fromarray(img_as_ubyte(resized_image))
 
 
-# Async functions for batch processing
 async def process_image(image_file, input_folder, output_folder, margin=25, desired_width=940, desired_height=1215):
     input_path = os.path.join(input_folder, image_file)
     output_path = os.path.join(output_folder, image_file)
