@@ -1,5 +1,7 @@
 import asyncio
 import os
+from io import BytesIO
+
 import numpy as np
 import torch
 from PIL import Image, ExifTags
@@ -29,48 +31,61 @@ class Model1Processor:
         self.processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
         self.model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
 
-    def process_single_image(self, image_path, output_path, margin=25, desired_width=940, desired_height=1215):
-        try:
-            image = Image.open(image_path)
-            image = correct_orientation(image)
-            image_np = np.array(image)
-
-            boxes, scores = self.process_model(image_np)
-            largest_box = boxes[np.argmax(scores)]
-            x1, y1, x2, y2 = largest_box
-
-            detected_height = y2 - y1
-            image_height, image_width = image_np.shape[:2]
-
-            # Regla 1
-            if (y1 <= 0 and y2 >= image_height) and (detected_height >= 0.9 * image_height):
-                final_image = self.rule1(image_np, x1, y1, x2, y2, desired_width, desired_height)
-            # Regla 2
-            elif y1 - margin >= 0 or y2 + margin <= image_height:
-                final_image = self.rule2(image_np, x1, y1, x2, y2, margin, desired_width, desired_height)
-            # Regla 3
-            else:
-                final_image = self.rule3(image_np, x1, y1, x2, y2, margin, desired_width, desired_height)
-
-            final_image.save(output_path, dpi=(72, 72))
-            print(f"Imagen procesada y guardada en: {output_path}")
-            return output_path
-
-        except Exception as e:
-            print(f"Error procesando la imagen: {e}")
-            return None
-
-    def process_model(self, image_np):
-        inputs = self.processor(images=image_np, return_tensors="pt")
+    def process_model(self, image):
+        inputs = self.processor(images=image, return_tensors="pt")
         outputs = self.model(**inputs)
-        target_sizes = torch.tensor([image_np.shape[:2]])
+        target_sizes = torch.tensor([image.size[::-1]])
         results = self.processor.post_process_object_detection(outputs, target_sizes=target_sizes)[0]
         boxes = results["boxes"].detach().numpy()
         scores = results["scores"].detach().numpy()
         return boxes, scores
 
+    def process_single_image(self, image, margin=25, desired_width=940, desired_height=1215, dpi=(72, 72)):
+        try:
+            image = correct_orientation(image)
+            image_np = np.array(image)
+
+            boxes, scores = self.process_model(image)
+            largest_box = boxes[np.argmax(scores)]
+            x1, y1, x2, y2 = largest_box
+
+            detected_height = y2 - y1
+            image_height, image_width = image_np.shape[:2]
+            top_margin = y1
+            bottom_margin = image_height - y2
+            coverage_percentage = detected_height / image_height
+
+            if (y1 <= 0 and y2 >= image_height) or (coverage_percentage >= 0.9):
+                final_image = self.rule1(image_np, x1, y1, x2, y2, desired_width, desired_height)
+            elif self.is_aligned_towards_bottom(top_margin, bottom_margin):
+                print("Espacio dominante arriba, aplicando Regla 2")
+                final_image = self.rule2(image_np, x1, y1, x2, y2, margin, desired_width, desired_height)
+            elif top_margin > margin and bottom_margin > margin:
+                final_image = self.rule3(image_np, x1, y1, x2, y2, margin, desired_width, desired_height)
+            else:
+                # Fallback para cualquier otro caso, si es necesario
+                print("fallabck")
+                final_image = self.rule2(image_np, x1, y1, x2, y2, margin, desired_width, desired_height)
+
+            output_buffer = self.buffer_final(dpi, final_image)
+            return output_buffer
+
+        except Exception as e:
+            print(f"Error processing image: {e}")
+            return None
+
+    @staticmethod
+    def is_aligned_towards_bottom(top_margin, bottom_margin, tolerance=0.15):
+        """
+        Verifica si el objeto está alineado hacia abajo con espacio en la parte superior.
+        """
+        if top_margin > bottom_margin and bottom_margin / (top_margin + 1e-5) < tolerance:
+            return True
+        return False
+
     @staticmethod
     def rule1(image_np, x1, y1, x2, y2, desired_width, desired_height):
+        print("Regla 1.")
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
         aspect_ratio = desired_width / desired_height
@@ -95,27 +110,28 @@ class Model1Processor:
 
     @staticmethod
     def rule2(image_np, x1, y1, x2, y2, margin, desired_width, desired_height):
+        print("Regla 2")
+
         image_height, image_width = image_np.shape[:2]
 
         if y1 - margin >= 0:
             y1 -= margin
             y2 = y1 + (y2 - y1)
             recorte_medio = True
+
         elif y2 + margin <= image_height:
             y2 += margin
             y1 = y2 - (y2 - y1)
             recorte_medio = True
         else:
             recorte_medio = False
-
         crop_height = y2 - y1
         crop_width = crop_height * (desired_width / desired_height)
-
         x_center = (x1 + x2) / 2
         new_x1 = max(0, x_center - crop_width / 2)
         new_x2 = min(image_width, x_center + crop_width / 2)
-
         cropped_image = image_np[int(y1):int(y2), int(new_x1):int(new_x2)]
+
         img = Image.fromarray(img_as_ubyte(cropped_image))
 
         img_ratio = img.width / img.height
@@ -129,24 +145,28 @@ class Model1Processor:
             new_height = int(new_width / img_ratio)
 
         resized_image = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        if resized_image.width > desired_width or resized_image.height > desired_height:
+            left = max(0, (resized_image.width - desired_width) // 2)
+            top = max(0, (resized_image.height - desired_height) // 2)
 
-        left = max(0, (resized_image.width - desired_width) // 2)
-        top = max(0, (resized_image.height - desired_height) // 2)
+            if recorte_medio:
+                if y1 < image_height // 2:
+                    top = 0
+                elif y2 > image_height // 2:
+                    top = resized_image.height - desired_height
 
-        if recorte_medio:
-            if y1 < image_height // 2:
-                top = 0
-            elif y2 > image_height // 2:
-                top = resized_image.height - desired_height
+            right = left + desired_width
+            bottom = top + desired_height
 
-        right = left + desired_width
-        bottom = top + desired_height
+            final_image = resized_image.crop((left, top, right, bottom))
+        else:
+            final_image = resized_image
 
-        final_image = resized_image.crop((left, top, right, bottom))
         return final_image
 
     @staticmethod
     def rule3(image_np, x1, y1, x2, y2, margin, desired_width, desired_height):
+        print("Regla 3.")
         image_height = image_np.shape[0]
         center_x = (x1 + x2) / 2
 
@@ -173,13 +193,21 @@ class Model1Processor:
         resized_image = resize(image_np, (desired_height, desired_width), anti_aliasing=True)
         return Image.fromarray(img_as_ubyte(resized_image))
 
+    @staticmethod
+    def buffer_final(dpi, final_image):
+        output_buffer = BytesIO()
+        final_image.save(output_buffer, format='JPEG', dpi=dpi)
+        output_buffer.seek(0)
+        return output_buffer
+
 
 async def process_image(image_file, input_folder, output_folder, margin=25, desired_width=940, desired_height=1215):
     input_path = os.path.join(input_folder, image_file)
     output_path = os.path.join(output_folder, image_file)
     loop = asyncio.get_running_loop()
     processor = Model1Processor()
-    await loop.run_in_executor(None, processor.process_single_image, input_path, output_path, margin, desired_width, desired_height)
+    await loop.run_in_executor(None, processor.process_single_image, input_path, output_path, margin, desired_width,
+                               desired_height)
 
 
 async def process_images_in_folder(input_folder, salida_folder, margin=25, desired_width=940, desired_height=1215):
