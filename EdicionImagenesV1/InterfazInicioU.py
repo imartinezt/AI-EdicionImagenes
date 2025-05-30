@@ -6,8 +6,12 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from PIL import Image, UnidentifiedImageError, ImageSequence
 
-import model1
-import model2
+# import model1
+# import model2
+
+# Importamos la lógica de los nuevos modelos
+
+import model1_update, model2_update
 
 class ImageProcessingApp(ctk.CTk):
     def __init__(self):
@@ -174,37 +178,6 @@ class ImageProcessingApp(ctk.CTk):
         footer = ctk.CTkLabel(self.main_frame, text="© 2024 Equipo de AI", font=ctk.CTkFont(family="Open Sans", size=10))
         footer.pack(side="bottom", pady=15)
 
-    # def show_model_details(self):
-    #     self.clear_main_frame()
-    #
-    #     lbl_model_title = ctk.CTkLabel(self.main_frame, text=self.model,
-    #                                    font=ctk.CTkFont(family="Montserrat", size=24, weight="bold"))
-    #     lbl_model_title.pack(pady=(20, 10))
-    #
-    #     txt_description = ctk.CTkTextbox(self.main_frame, width=550, height=180, wrap="word",
-    #                                       font=ctk.CTkFont(family="Open Sans", size=16),
-    #                                       activate_scrollbars=False,
-    #                                       fg_color=self.cget("fg_color"),
-    #                                       )
-    #     txt_description.insert("1.0", self.model_description)
-    #     txt_description.configure(state="disabled")
-    #     txt_description.pack(pady=20, padx=20)
-    #
-    #     btn_select_folder = ctk.CTkButton(self.main_frame, text="  Seleccionar Carpeta", image=self.icon_folder,
-    #                                       compound="left", command=self.load_images, width=280, height=45,
-    #                                       font=ctk.CTkFont(size=16, weight="bold"))
-    #     btn_select_folder.pack(pady=(30, 10))
-    #
-    #     btn_back = ctk.CTkButton(self.main_frame, text="  Atrás", image=self.icon_back,
-    #                              compound="left", command=self.show_welcome_screen, width=280, height=45, # CUIDADO AQUÍ
-    #                              font=ctk.CTkFont(size=16))
-    #     btn_back.pack(pady=5)
-    #
-    #     # pie de página
-    #     footer = ctk.CTkLabel(self.main_frame, text="© 2024 Equipo de AI", font=ctk.CTkFont(family="Open Sans", size=10))
-    #     footer.pack(side="bottom", pady=15)
-
-
     def load_images(self):
         self.folder_path = filedialog.askdirectory()
         if not self.folder_path:
@@ -228,7 +201,7 @@ class ImageProcessingApp(ctk.CTk):
         lbl_loading.pack(pady=40)
 
         try:
-            loading_image = Image.open("tri-spinner.gif")
+            loading_image = Image.open("spinner.gif")
             frames = []
 
             for frame in ImageSequence.Iterator(loading_image):
@@ -279,10 +252,10 @@ class ImageProcessingApp(ctk.CTk):
             print(f"Error procesando las imágenes: {str(e)}")
 
     async def process_model1_images(self, output_folder):
-        await model1.process_images_in_folder(self.folder_path, output_folder)
+        await model1_update.process_images_in_folder(self.folder_path, output_folder)
 
     def process_model2_images(self, output_folder):
-        model2.process_images_in_folder(self.folder_path, output_folder)
+        model2_update.process_images_in_folder(self.folder_path, output_folder)
 
     def show_completion_message(self, elapsed_time):
         if self.lbl_image and self.lbl_image.winfo_exists():

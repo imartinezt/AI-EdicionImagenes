@@ -425,7 +425,7 @@ class Model2Processor:
                         name, _ = os.path.splitext(filename)
                         output_path = os.path.join(
                             self.settings.output_dir,
-                            f"{name}_processed.jpg"
+                            f"{name}.jpg"
                         )
                         result.save(
                             output_path,
@@ -514,6 +514,38 @@ def process_product_image(image_path: str, output_path: str = "output_product.jp
         else:
             print("❌ Error procesando imagen")
             return None
+
+
+def process_images_in_folder(input_folder: str, output_folder: str):
+    """
+    Método llamado en la interfaz gráfica
+
+    :param input_folder: El directorio que contiene todas las imágenes a procesar
+    :param output_folder: El directorio donde se guardaran las imágenes procesadas
+    """
+
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+    image_files = [f for f in os.listdir(input_folder) if os.path.splitext(f)[1].lower() in image_extensions]
+
+    image_paths = []
+    for image_file in image_files:
+
+        # Generamos el path completo (considerando image file e input path)
+        image_input_path = os.path.join(input_folder, image_file)
+
+        # Agregamos la ruta actual a la lista de rutas
+        image_paths.append(image_input_path)
+
+    # Mandamos a llamar la nueva lógica del modelo
+
+    results = process_products_fast(
+        image_paths= image_paths,
+        backend='u2net',
+        quality_mode='balanced',  # fast, high
+        output_dir=output_folder)
 
 
 if __name__ == "__main__":

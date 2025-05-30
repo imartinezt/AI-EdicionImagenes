@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 import numpy as np
 from PIL import Image, ExifTags
 from ultralytics import YOLO
+import os
 
 """
 @Autor: Iván Martínez Trejo.
@@ -849,54 +850,6 @@ class AntiDistortionProcessor:
             traceback.print_exc()
             return None
 
-
-# def process_local_image(input_path: str, output_dir: str = "output_sin_distorsion"):
-#     """Procesar imagen sin distorsión"""
-#
-#     async def _process():
-#         output_path = Path(output_dir)
-#         output_path.mkdir(exist_ok=True)
-#
-#         if not Path(input_path).exists():
-#             print(f"❌ Archivo no encontrado: {input_path}")
-#             return
-#
-#         print(f"📁 Entrada: {input_path}")
-#         print(f"📁 Salida: {output_dir}")
-#
-#         settings = Settings()
-#         processor = AntiDistortionProcessor(settings)
-#
-#         with Image.open(input_path) as img:
-#             print(f"📸 Imagen cargada: {img.size} {img.mode}")
-#
-#             result = await processor.process_single_image(img)
-#
-#             if result:
-#                 input_file = Path(input_path)
-#                 output_file = output_path / f"{input_file.stem}_sin_distorsion{input_file.suffix}"
-#
-#                 result.save(
-#                     output_file,
-#                     format='JPEG',
-#                     quality=95,
-#                     optimize=True,
-#                     dpi=settings.target_dpi
-#                 )
-#
-#                 print(f"\n🎉 ÉXITO TOTAL!")
-#                 print(f"📄 Guardado: {output_file}")
-#                 print(f"📊 Dimensiones exactas: {result.size}")
-#                 print(f"🚫 SIN DISTORSIÓN garantizada")
-#                 print(f"💎 Proporciones naturales preservadas")
-#
-#             else:
-#                 print("❌ Procesamiento falló")
-#
-#     asyncio.run(_process())
-
-# Ojo aqui luis [ process_local_image ]  deberias sustituirlo por process_images_from_urls
-
 async def process_local_image(input_path: str, output_dir: str = "output_sin_distorsion"):
     """Procesar imagen sin distorsión (async version)""" # Note: no asyncio.run() here
     output_path = Path(output_dir)
@@ -925,7 +878,7 @@ async def process_local_image(input_path: str, output_dir: str = "output_sin_dis
                 if suffix.lower() == '.jpeg':
                     suffix = '.jpg' # Or handle consistency as desired
 
-                output_file = output_path / f"{input_file.stem}_sin_distorsion{suffix}"
+                output_file = output_path / f"{input_file.stem}{suffix}"
 
                 result.save(
                     output_file,
@@ -946,16 +899,22 @@ async def process_local_image(input_path: str, output_dir: str = "output_sin_dis
     except Exception as e:
         print(f"An error occurred during process_local_image: {e}")
 
-if __name__ == "__main__":
-    input_image = "/Users/LAFLORESE/Pictures/test-AIEdicion/Ejemplos/ORIGINALES_EJECUTABLE/1160427147.jpg"
-    output_folder = "results_sin_distorsion"
 
-    print("🚀 SISTEMA SIN DISTORSIÓN PARA RETAIL DE MODA")
-    print("🚫 Elimina distorsión completamente | 💎 Preserva proporciones naturales")
-    print("🛡️ 100% de éxito garantizado - Nunca falla")
-    print("=" * 70)
+async def process_images_in_folder(entrada_folder, salida_folder):
+    if not os.path.exists(salida_folder):
+        os.makedirs(salida_folder)
 
-    process_local_image(input_image, output_folder)
+    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+    image_files = [f for f in os.listdir(entrada_folder) if os.path.splitext(f)[1].lower() in image_extensions]
 
-    print("\n🎉 Procesamiento sin distorsión completado!")
-    print("📊 Revisa la carpeta results_sin_distorsion/ para los resultados")
+    tasks = []
+
+    for image_file in image_files:
+
+        # Generamos el path completo (considerando image file e input path)
+        image_input_folder = os.path.join(entrada_folder, image_file)
+
+        # Mandamos a llamar la nueva lógica del modelo
+        tasks.append(process_local_image(input_path=image_input_folder, output_dir=salida_folder))
+
+    await asyncio.gather(*tasks)
