@@ -7,6 +7,8 @@ from skimage.transform import resize
 from skimage.util import img_as_ubyte
 from transformers import DetrImageProcessor, DetrForObjectDetection
 
+# Importamos la lógica del archivo test
+import test
 
 def correct_orientation(imagen):
     orientation_key = next((k for k, v in ExifTags.TAGS.items() if v == 'Orientation'), None)
@@ -26,14 +28,16 @@ def correct_orientation(imagen):
 
 class Model1Processor:
     def __init__(self):
-        self.processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
-        self.model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50", revision="no_timm")
+        self.processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-101", revision="no_timm")
+        self.model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-101", revision="no_timm")
 
     def process_model(self, image_np):
         inputs = self.processor(images=image_np, return_tensors="pt")
-        outputs = self.model(**inputs)
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
         target_sizes = torch.tensor([image_np.shape[:2]])
-        results = self.processor.post_process_object_detection(outputs, target_sizes=target_sizes)[0]
+        results = self.processor.post_process_object_detection(outputs, target_sizes=target_sizes, threshold=0.3)[0]
         boxes = results["boxes"].detach().numpy()
         scores = results["scores"].detach().numpy()
         return boxes, scores
@@ -191,24 +195,39 @@ class Model1Processor:
         return Image.fromarray(img_as_ubyte(resized_image))
 
 
+# async def process_image(image_file, input_folder, output_folder, margin=25, desired_width=940, desired_height=1215):
+#     input_path = os.path.join(input_folder, image_file)
+#     output_path = os.path.join(output_folder, image_file)
+#     loop = asyncio.get_running_loop()
+#     processor = Model1Processor()
+#     await loop.run_in_executor(None, processor.process_single_image, input_path, output_path, margin, desired_width,
+#                                desired_height)
+
 async def process_image(image_file, input_folder, output_folder, margin=25, desired_width=940, desired_height=1215):
     input_path = os.path.join(input_folder, image_file)
     output_path = os.path.join(output_folder, image_file)
     loop = asyncio.get_running_loop()
     processor = Model1Processor()
+    # Call the synchronous method in an executor to avoid blocking the event loop
     await loop.run_in_executor(None, processor.process_single_image, input_path, output_path, margin, desired_width,
                                desired_height)
 
 
-async def process_images_in_folder(input_folder, salida_folder, margin=25, desired_width=940, desired_height=1215):
+async def process_images_in_folder(entrada_folder, salida_folder, margin=25, desired_width=940, desired_height=1215):
     if not os.path.exists(salida_folder):
         os.makedirs(salida_folder)
 
     image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
-    image_files = [f for f in os.listdir(input_folder) if os.path.splitext(f)[1].lower() in image_extensions]
+    image_files = [f for f in os.listdir(entrada_folder) if os.path.splitext(f)[1].lower() in image_extensions]
 
     tasks = []
     for image_file in image_files:
-        tasks.append(process_image(image_file, input_folder, salida_folder, margin, desired_width, desired_height))
+
+        # Generamos el path completo (considerando image file e input path)
+        image_input_folder = os.path.join(entrada_folder, image_file)
+
+        # Mandamos a llamar la nueva lógica del modelo
+        tasks.append(test.process_local_image(input_path=image_input_folder, output_dir=salida_folder))
+
 
     await asyncio.gather(*tasks)
