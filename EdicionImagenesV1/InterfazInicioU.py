@@ -6,9 +6,6 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from PIL import Image, UnidentifiedImageError, ImageSequence
 
-# import model1
-# import model2
-
 # Importamos la lógica de los nuevos modelos
 
 import model1_update, model2_update

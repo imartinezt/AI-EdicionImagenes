@@ -4,3 +4,11 @@ EdicionImagenesV1/dist/
 EdicionImagenesV1/__pycache__/
 EdicionImagenesV1/test_imgs/
 .DS_Store
+.idea
+
+
+# Virtual Environment
+.venv
+
+# Cache
+*__pycache__

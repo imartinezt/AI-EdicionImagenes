@@ -128,7 +128,7 @@ class ImageProcessingApp(tk.Tk):
 
         # animación de carga si existe
         try:
-            loading_image = Image.open("loading.gif")
+            loading_image = Image.open("spinner.gif")
             frames = []
 
             for frame in ImageSequence.Iterator(loading_image):

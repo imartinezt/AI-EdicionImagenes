@@ -544,7 +544,7 @@ def process_images_in_folder(input_folder: str, output_folder: str):
     results = process_products_fast(
         image_paths= image_paths,
         backend='u2net',
-        quality_mode='balanced',  # fast, high
+        quality_mode='balanced',  # fast, high, balanced
         output_dir=output_folder)
 
 
@@ -566,7 +566,7 @@ if __name__ == "__main__":
     ]
     results = process_products_fast(
         image_paths,
-        backend='u2net', #u2netp
-        quality_mode='balanced',  # fast, higth
+        backend='u2netp', #u2netp
+        quality_mode='balanced',  # fast, high, balanced
         output_dir='productos_procesados'
     )
