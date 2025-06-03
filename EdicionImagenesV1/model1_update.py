@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image, ExifTags
 from ultralytics import YOLO
 import os
+import sys
 
 """
 @Autor: Iván Martínez Trejo.
@@ -17,6 +18,21 @@ Elimina completamente la distorsión usando técnicas matemáticas avanzadas
 Preserva proporciones naturales de las personas detectadas
 """
 
+def resource_path(relative_path):
+    """
+    Obtenemos la ruta absoluta a los recursos como íconos, imágenes, etc.
+    En este caso hay que acceder a las rutas de los modelos .pt
+    """
+
+    try:
+
+        base_path = sys._MEIPASS
+
+    except Exception:
+
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 class Settings:
     """Configuración anti-distorsión"""
@@ -117,12 +133,12 @@ class EnhancedPersonDetector:
         print(f"🤖 Cargando modelo: {model_path}")
 
         try:
-            self.model = YOLO(model_path)
+            self.model = YOLO(str(resource_path(model_path)))
             self.has_pose = True
             print(f"✅ Modelo YOLO11 Pose cargado!")
         except Exception as e:
             print(f"⚠️  Fallback a YOLO11 regular: {e}")
-            self.model = YOLO("yolo11n.pt")
+            self.model = YOLO(str(resource_path("yolo11n.pt")))
             self.has_pose = False
             print(f"✅ Modelo YOLO11 regular cargado!")
 

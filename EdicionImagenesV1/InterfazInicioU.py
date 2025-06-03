@@ -26,7 +26,7 @@ def resource_path(relative_path):
 
         base_path = os.path.abspath(".")
 
-    return os.path.join(base_path, relative_path)
+    return str(os.path.join(base_path, relative_path))
 
 
 class ImageProcessingApp(ctk.CTk):

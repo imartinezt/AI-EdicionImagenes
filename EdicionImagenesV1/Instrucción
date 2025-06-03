@@ -1,1 +1,1 @@
-pyinstaller --onefile --add-data "img\Liverpool_logo.svg.png;img" --add-data "img\loading.gif;img" InterfazInicio.py
+pyinstaller --noconfirm --onedir --windowed --add-data "icons;icons" --add-data "images;images" --add-data "yolo11n-pose.pt;." --hidden-import "PIL._ ImageTk" --hidden-import "ultralytics.engine.model" "InterfazInicioU.py"
