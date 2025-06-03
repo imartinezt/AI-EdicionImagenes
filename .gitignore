@@ -12,3 +12,6 @@ EdicionImagenesV1/test_imgs/
 
 # Cache
 *__pycache__
+
+# .zip con las imágenes de prueba
+*.zip

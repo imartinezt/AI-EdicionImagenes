@@ -5,10 +5,29 @@ import time
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from PIL import Image, UnidentifiedImageError, ImageSequence
+import sys
+
 
 # Importamos la lógica de los nuevos modelos
 
 import model1_update, model2_update
+
+
+def resource_path(relative_path):
+    """
+    Obtenemos la ruta absoluta a los recursos como íconos, imágenes, etc.
+    """
+
+    try:
+
+        base_path = sys._MEIPASS
+
+    except Exception:
+
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 
 class ImageProcessingApp(ctk.CTk):
     def __init__(self):
@@ -59,11 +78,11 @@ class ImageProcessingApp(ctk.CTk):
 
     def load_icons(self):
         try:
-            self.icon_model1 = ctk.CTkImage(Image.open("icons/recorte.png").resize((24, 24)))
-            self.icon_model2 = ctk.CTkImage(Image.open("icons/fondo_blanco.png").resize((24, 24)))
-            self.icon_folder = ctk.CTkImage(Image.open("icons/carpeta.png").resize((24, 24)))
-            self.icon_exit = ctk.CTkImage(Image.open("icons/salir.png").resize((24, 24)))
-            self.icon_back = ctk.CTkImage(Image.open("icons/atras.png").resize((24, 24)))
+            self.icon_model1 = ctk.CTkImage(Image.open(resource_path("icons/recorte.png")).resize((24, 24)))
+            self.icon_model2 = ctk.CTkImage(Image.open(resource_path("icons/fondo_blanco.png")).resize((24, 24)))
+            self.icon_folder = ctk.CTkImage(Image.open(resource_path("icons/carpeta.png")).resize((24, 24)))
+            self.icon_exit = ctk.CTkImage(Image.open(resource_path("icons/salir.png")).resize((24, 24)))
+            self.icon_back = ctk.CTkImage(Image.open(resource_path("icons/atras.png")).resize((24, 24)))
         except FileNotFoundError:
             messagebox.showwarning("Advertencia", "No se encontraron algunos iconos. Asegúrate de que están en la carpeta 'icons'.")
             self.icon_model1 = None
@@ -74,7 +93,7 @@ class ImageProcessingApp(ctk.CTk):
 
     def setup_sidebar(self):
         try:
-            logo_image = Image.open("Liverpool_logo.svg.png")
+            logo_image = Image.open(resource_path("images/Liverpool_logo.svg.png"))
             logo_image = logo_image.resize((180, 40))
             logo_photo = ctk.CTkImage(light_image=logo_image, dark_image=logo_image, size=(180, 40))
 
@@ -198,7 +217,7 @@ class ImageProcessingApp(ctk.CTk):
         lbl_loading.pack(pady=40)
 
         try:
-            loading_image = Image.open("spinner.gif")
+            loading_image = Image.open(resource_path("images/spinner.gif"))
             frames = []
 
             for frame in ImageSequence.Iterator(loading_image):
