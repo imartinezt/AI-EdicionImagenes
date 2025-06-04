@@ -12,6 +12,11 @@ import sys
 
 import model1_update, model2_update
 
+# --- Agrega un pequeño retraso al inicio ---
+# Solo si no está en modo desarrollo (para no ralentizar cada vez)
+if getattr(sys, 'frozen', False): # Verifica si la aplicación está "congelada" por PyInstaller
+    time.sleep(1.0) # Retraso de 0.5 segundos
+
 
 def resource_path(relative_path):
     """

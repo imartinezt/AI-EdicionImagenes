@@ -548,25 +548,25 @@ def process_images_in_folder(input_folder: str, output_folder: str):
         output_dir=output_folder)
 
 
-if __name__ == "__main__":
-    image_paths = [
-        "products/1114342919_2p.jpg",
-        "products/1132714947_1p.jpg",
-        "products/1133550590.jpg",
-        "products/1142090534_2p.JPG",
-        "products/1142325612_2p.JPG",
-        "products/1142511416.jpg",
-        "products/1149005095.JPG",
-        "products/1155721835_3p.JPG",
-        "products/1155721835_4p.JPG",
-        "products/mes_ev_TEST_00083.JPG",
-        "products/mes_ref_TEST_00033.JPG",
-        "products/mes_TEST_00004.JPG",
-        "products/mes_TEST_00012.JPG"
-    ]
-    results = process_products_fast(
-        image_paths,
-        backend='u2netp', #u2netp
-        quality_mode='balanced',  # fast, high, balanced
-        output_dir='productos_procesados'
-    )
+# if __name__ == "__main__":
+#     image_paths = [
+#         "products/1114342919_2p.jpg",
+#         "products/1132714947_1p.jpg",
+#         "products/1133550590.jpg",
+#         "products/1142090534_2p.JPG",
+#         "products/1142325612_2p.JPG",
+#         "products/1142511416.jpg",
+#         "products/1149005095.JPG",
+#         "products/1155721835_3p.JPG",
+#         "products/1155721835_4p.JPG",
+#         "products/mes_ev_TEST_00083.JPG",
+#         "products/mes_ref_TEST_00033.JPG",
+#         "products/mes_TEST_00004.JPG",
+#         "products/mes_TEST_00012.JPG"
+#     ]
+#     results = process_products_fast(
+#         image_paths,
+#         backend='u2netp', #u2netp
+#         quality_mode='balanced',  # fast, high, balanced
+#         output_dir='productos_procesados'
+#     )
